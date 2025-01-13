@@ -75,17 +75,16 @@ def get_env_vars(
 
     env_vars = {}
     for var_name in local_env_vars:
-        value = os.getenv(var_name)
-        if value is not None:
-            env_vars[var_name] = value
-        else:
+        try:
+            env_vars[var_name] = os.environ[var_name]
+        except KeyError:
             logger.warning(
                 f"Environment variable {var_name} not found in local environment"
             )
 
     for secret_name in secrets_env_vars:
-        v1 = client.CoreV1Api()
         try:
+            v1 = client.CoreV1Api()
             secret = v1.read_namespaced_secret(name=secret_name, namespace=namespace)
             for key, value in secret.data.items():
                 decoded_value = base64.b64decode(value).decode("utf-8")
