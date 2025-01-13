@@ -182,8 +182,14 @@ def test_launch_command(mock_kubernetes_job, mock_k8s_client, interactive):
         assert "python test.py" in job_args["args"][0]
 
 
-def test_launch_with_env_vars(mock_k8s_client):
+@patch("kblaunch.cli.KubernetesJob")
+def test_launch_with_env_vars(mock_kubernetes_job, mock_k8s_client):
     """Test launch command with environment variables."""
+    # Setup mock instance
+    mock_job_instance = mock_kubernetes_job.return_value
+    mock_job_instance.generate_yaml.return_value = "dummy: yaml"
+    mock_job_instance.run.return_value = None
+
     # Mock job completion check
     batch_api = mock_k8s_client["batch_api"]
     batch_api.list_namespaced_job.return_value.items = []
@@ -208,6 +214,9 @@ def test_launch_with_env_vars(mock_k8s_client):
         logger.error(f"Exception: {result.exception}")
 
     assert result.exit_code == 0
+    mock_kubernetes_job.assert_called_once()
+    mock_job_instance.generate_yaml.assert_called_once()
+    mock_job_instance.run.assert_called_once()
 
 
 def test_launch_invalid_params():
