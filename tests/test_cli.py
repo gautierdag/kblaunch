@@ -142,7 +142,7 @@ def test_launch_command(mock_generate_yaml, mock_run, mock_k8s_client, interacti
     """Test launch command with different configurations."""
     # Mock job completion check
     batch_api = mock_k8s_client["batch_api"]
-    batch_git api.list_namespaced_job.return_value.items = []
+    batch_api.list_namespaced_job.return_value.items = []
 
     args = []
     if interactive:
