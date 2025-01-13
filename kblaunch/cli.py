@@ -69,9 +69,12 @@ def get_env_vars(
     """Get environment variables from local environment and secrets."""
 
     if load_dotenv:
-        from dotenv import load_dotenv
+        try:
+            from dotenv import load_dotenv
 
-        load_dotenv()
+            load_dotenv()
+        except Exception as e:
+            logger.warning(f"Error loading .env file: {e}")
 
     env_vars = {}
     for var_name in local_env_vars:
@@ -92,8 +95,7 @@ def get_env_vars(
                     logger.warning(f"Key {key} already set in env_vars.")
                 env_vars[key] = decoded_value
         except Exception as e:
-            logger.error(f"Error reading secret {secret_name}: {e}")
-            raise e
+            logger.warning(f"Error reading secret {secret_name}: {e}")
 
     return env_vars
 
