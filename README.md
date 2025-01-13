@@ -78,7 +78,7 @@ kblaunch \
     --job-name gpu-job \
     --command "python train.py" \
     --gpu-limit 2 \
-    --gpu-product "NVIDIA-A100-80GB"
+    --gpu-product "NVIDIA-A100-SXM4-80GB"
 ```
 
 ### Interactive Mode
@@ -103,7 +103,7 @@ kblaunch \
 - `--cpu-request`: CPU request (default: "1")
 - `--ram-request`: RAM request (default: "8Gi")
 - `--gpu-limit`: GPU limit (default: 1)
-- `--gpu-product`: GPU product (default: "NVIDIA-A100-80GB-PCIe")
+- `--gpu-product`: GPU product (default: "NVIDIA-A100-SXM4-80GB")
 - `--secrets-env-vars`: List of secret environment variables
 - `--local-env-vars`: List of local environment variables
 - `--load-dotenv`: Load environment variables from .env file (default: True)
