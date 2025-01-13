@@ -78,7 +78,7 @@ kblaunch \
     --job-name gpu-job \
     --command "python train.py" \
     --gpu-limit 2 \
-    --gpu-product "NVIDIA-A100-80GB-PCIe"
+    --gpu-product "NVIDIA-A100-80GB"
 ```
 
 ### Interactive Mode

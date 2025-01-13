@@ -68,7 +68,7 @@ def get_env_vars(
     secrets_env_vars: list[str],
     load_dotenv: bool = False,
     namespace: str = "informatics",
-) -> dict:
+) -> dict[str, str]:
     """Get environment variables from local environment and secrets."""
 
     if load_dotenv:
@@ -126,7 +126,7 @@ def launch(
     cpu_request: str = typer.Option("1", help="CPU request"),
     ram_request: str = typer.Option("8Gi", help="RAM request"),
     gpu_limit: int = typer.Option(1, help="GPU limit"),
-    gpu_product: str = typer.Option("NVIDIA-A100-80GB-PCIe", help="GPU product"),
+    gpu_product: str = typer.Option("NVIDIA-A100-SXM4-80GB", help="GPU product"),
     secrets_env_vars: list[str] = typer.Option(
         [],  # Use empty list as default instead of None
         help="List of secret environment variables to export to the container",
@@ -175,7 +175,6 @@ def launch(
             user_email=email,
             namespace=namespace,
             kueue_queue_name=queue_name,
-            secret_env_vars=env_vars,
             volume_mounts={
                 "nfs": {"mountPath": "/nfs", "server": "10.24.1.255", "path": "/"}
             },
