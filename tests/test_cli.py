@@ -136,9 +136,7 @@ def test_send_message_command():
 
 
 @pytest.mark.parametrize("interactive", [True, False])
-@patch("kubejobs.jobs.KubernetesJob.run")
-@patch("kubejobs.jobs.KubernetesJob.generate_yaml")
-def test_launch_command(mock_generate_yaml, mock_run, mock_k8s_client, interactive):
+def test_launch_command(mock_k8s_client, interactive):
     """Test launch command with different configurations."""
     # Mock job completion check
     batch_api = mock_k8s_client["batch_api"]
@@ -158,7 +156,7 @@ def test_launch_command(mock_generate_yaml, mock_run, mock_k8s_client, interacti
             "python test.py",
         ]
     )
-
+    # with
     result = runner.invoke(app, args)
 
     if result.exit_code != 0:
