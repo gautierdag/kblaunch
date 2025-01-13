@@ -185,7 +185,9 @@ def test_launch_with_env_vars(mock_k8s_client):
     )
 
     if result.exit_code != 0:
-        print(f"Error output: {result.output}")  # For debugging
+        # Capture any exceptions for debugging
+        print(f"Error output: {result.output}")
+        print(f"Exception: {result.exception}")
 
     assert result.exit_code == 0
 
