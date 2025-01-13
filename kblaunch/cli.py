@@ -180,10 +180,8 @@ def launch(
                 "nfs": {"mountPath": "/nfs", "server": "10.24.1.255", "path": "/"}
             },
         )
-
         job_yaml = job.generate_yaml()
         logger.info(job_yaml)
-
         # Run the Job on the Kubernetes cluster
         job.run()
     else:

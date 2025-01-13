@@ -136,16 +136,22 @@ def test_send_message_command():
 
 
 @pytest.mark.parametrize("interactive", [True, False])
-def test_launch_command(mock_k8s_client, interactive):
+@patch("kblaunch.cli.KubernetesJob")
+def test_launch_command(mock_kubernetes_job, mock_k8s_client, interactive):
     """Test launch command with different configurations."""
+    # Setup mock instance
+    mock_job_instance = mock_kubernetes_job.return_value
+    mock_job_instance.generate_yaml.return_value = "dummy: yaml"
+    mock_job_instance.run.return_value = None
+
     # Mock job completion check
     batch_api = mock_k8s_client["batch_api"]
     batch_api.list_namespaced_job.return_value.items = []
 
+    # Prepare arguments
     args = []
     if interactive:
         args.extend(["--interactive"])
-
     args.extend(
         [
             "--email",
@@ -156,12 +162,24 @@ def test_launch_command(mock_k8s_client, interactive):
             "python test.py",
         ]
     )
-    # with
+
+    # Execute command
     result = runner.invoke(app, args)
 
-    if result.exit_code != 0:
-        logger.error(f"Error output: {result.output}")  # For debugging
+    # Verify results
     assert result.exit_code == 0
+    mock_kubernetes_job.assert_called_once()
+    mock_job_instance.generate_yaml.assert_called_once()
+    mock_job_instance.run.assert_called_once()
+
+    # Verify job creation parameters
+    job_args = mock_kubernetes_job.call_args[1]
+    assert job_args["name"] == "test-job"
+    assert job_args["user_email"] == "test@example.com"
+    if interactive:
+        assert "while true; do sleep 60; done;" in job_args["args"][0]
+    else:
+        assert "python test.py" in job_args["args"][0]
 
 
 def test_launch_with_env_vars(mock_k8s_client):
