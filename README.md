@@ -10,7 +10,19 @@ A CLI tool for launching Kubernetes jobs with environment variable and secret ma
 ## Installation
 
 ```bash
-pip install git+https://github.com/gautierdag/kblaunch.git
+pip install kblaunch
+```
+
+Or using `uv`:
+
+```bash
+uv add kblaunch
+```
+
+You can even use `uvx` to use the cli without installing it:
+
+```bash
+uvx kblaunch --help
 ```
 
 ## Usage
