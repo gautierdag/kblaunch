@@ -3,6 +3,7 @@ from unittest.mock import MagicMock
 
 import pytest
 from kubernetes import client, config
+from loguru import logger
 from typer.testing import CliRunner
 
 from kblaunch.cli import (
@@ -159,8 +160,7 @@ def test_launch_command(mock_k8s_client, interactive):
     result = runner.invoke(app, args)
 
     if result.exit_code != 0:
-        print(f"Error output: {result.output}")  # For debugging
-
+        logger.error(f"Error output: {result.output}")  # For debugging
     assert result.exit_code == 0
 
 
@@ -186,8 +186,8 @@ def test_launch_with_env_vars(mock_k8s_client):
 
     if result.exit_code != 0:
         # Capture any exceptions for debugging
-        print(f"Error output: {result.output}")
-        print(f"Exception: {result.exception}")
+        logger.error(f"Error output: {result.output}")
+        logger.error(f"Exception: {result.exception}")
 
     assert result.exit_code == 0
 

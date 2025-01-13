@@ -49,6 +49,9 @@ def check_if_completed(job_name: str, namespace: str = "informatics") -> bool:
 
 
 def send_message_command(env_vars: dict) -> str:
+    """
+    Send a message to Slack when the job starts if the SLACK_WEBHOOK environment variable is set.
+    """
     if "SLACK_WEBHOOK" not in env_vars:
         logger.debug("SLACK_WEBHOOK not found in env_vars.")
         return ""
