@@ -1,6 +1,6 @@
 [project]
 name = "kblaunch"
-version = "0.1.7"
+version = "0.1.8"
 description = "A CLI tool for launching Kubernetes jobs in EIDF"
 readme = "README.md"
 requires-python = ">=3.9"

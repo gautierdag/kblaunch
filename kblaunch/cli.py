@@ -462,6 +462,7 @@ def get_secret_env_vars(
                 secrets_env_vars[key] = secret_name
         except Exception as e:
             logger.warning(f"Error reading secret {secret_name}: {e}")
+    return secrets_env_vars
 
 
 @app.command()
