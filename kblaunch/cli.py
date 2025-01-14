@@ -519,6 +519,13 @@ def launch(
             namespace=namespace,
         )
 
+        # Check for overlapping keys in local and secret environment variables
+        union = set(secrets_env_vars_dict.keys()).intersection(env_vars_dict.keys())
+        if union:
+            logger.warning(
+                f"Overlapping keys in local and secret environment variables: {union}"
+            )
+
         logger.info(f"Creating job for: {cmd}")
         job = KubernetesJob(
             name=job_name,
