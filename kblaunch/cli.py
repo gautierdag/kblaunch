@@ -65,7 +65,7 @@ def send_message_command(env_vars: dict) -> str:
         return ""
     webhook = env_vars["SLACK_WEBHOOK"]
     return (
-        """apt-get install -y curl;"""  # Install the curl command
+        """apt-get update && apt-get install -y curl;"""  # Install the curl command
         + """curl -X POST -H 'Content-type: application/json' --data '{"text":"Job started in '"$POD_NAME"'"}' """
         + webhook
         + " ; "
