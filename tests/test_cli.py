@@ -64,7 +64,7 @@ def mock_kubernetes_job(monkeypatch):
         def run(self):
             return None
 
-    monkeypatch.setattr("kubejobs.jobs.KubernetesJob", MockKubernetesJob)
+    monkeypatch.setattr("kblaunch.kubejobs.KubernetesJob", MockKubernetesJob)
     return mock_job
 
 

@@ -2,7 +2,7 @@ import base64
 import os
 
 import typer
-from kubejobs.jobs import KubernetesJob, KueueQueue
+from kblaunch.kubejobs import KubernetesJob
 from kubernetes import client, config
 from loguru import logger
 
@@ -129,7 +129,7 @@ def launch(
         "nvcr.io/nvidia/cuda:12.0.0-devel-ubuntu22.04", help="Docker image"
     ),
     namespace: str = typer.Option("informatics", help="Kubernetes namespace"),
-    queue_name: str = typer.Option(KueueQueue.INFORMATICS, help="Kueue queue name"),
+    queue_name: str = typer.Option("informatics-user-queue", help="Kueue queue name"),
     interactive: bool = typer.Option(False, help="Run in interactive mode"),
     command: str = typer.Option(..., help="Command to run in the container"),
     cpu_request: str = typer.Option("1", help="CPU request"),

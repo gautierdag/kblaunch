@@ -1,6 +1,6 @@
 [project]
 name = "kblaunch"
-version = "0.1.3"
+version = "0.1.4"
 description = "A CLI tool for launching Kubernetes jobs in EIDF"
 readme = "README.md"
 requires-python = ">=3.9"
@@ -9,7 +9,6 @@ authors = [
     { name = "Gautier Dagan", email = "gautier.dagan@ed.ac.uk" }
 ]
 dependencies = [
-    "kubejobs>=0.4.5",
     "kubernetes>=31.0.0",
     "loguru>=0.7.3",
     "python-dotenv>=1.0.1",
