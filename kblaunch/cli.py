@@ -1,4 +1,3 @@
-import base64
 import grp
 import os
 import pwd
@@ -68,8 +67,8 @@ class KubernetesJob:
         backoff_limit: int = 4,
         restart_policy: str = "Never",
         shm_size: Optional[str] = None,
-        secret_env_vars: Optional[dict] = None,
         env_vars: Optional[dict] = None,
+        secret_env_vars: Optional[dict] = None,
         volume_mounts: Optional[dict] = None,
         job_deadlineseconds: Optional[int] = None,
         privileged_security_context: bool = False,
@@ -111,12 +110,14 @@ class KubernetesJob:
             else f"{max(1, MAX_RAM // gpu_limit)}G"  # Ensure minimum 1G and avoid division by zero
         )
 
+        self.env_vars = env_vars
+        self.secret_env_vars = secret_env_vars
+
         self.storage_request = storage_request
         self.backoff_limit = backoff_limit
         self.restart_policy = restart_policy
-        self.secret_env_vars = secret_env_vars
         self.image_pull_secret = image_pull_secret
-        self.env_vars = env_vars
+
         self.volume_mounts = volume_mounts
         self.job_deadlineseconds = job_deadlineseconds
         self.privileged_security_context = privileged_security_context
@@ -163,24 +164,26 @@ class KubernetesJob:
                 "valueFrom": {"fieldRef": {"fieldPath": "metadata.name"}},
             }
         ]
-        if self.secret_env_vars or self.env_vars:
-            if self.secret_env_vars:
-                for key, value in self.secret_env_vars.items():
-                    container["env"].append(
-                        {
-                            "name": key,
-                            "valueFrom": {
-                                "secretKeyRef": {
-                                    "name": value["secret_name"],
-                                    "key": value["key"],
-                                }
-                            },
-                        }
-                    )
+        # Add the environment variables
+        if self.env_vars:
+            for key, value in self.env_vars.items():
+                container["env"].append({"name": key, "value": value})
 
-            if self.env_vars:
-                for key, value in self.env_vars.items():
-                    container["env"].append({"name": key, "value": value})
+        # pass kubernetes secrets as environment variables
+        if self.secret_env_vars:
+            for key, secret_name in self.secret_env_vars.items():
+                container["env"].append(
+                    {
+                        "name": key,
+                        "valueFrom": {
+                            "secretKeyRef": {
+                                "name": secret_name,
+                                "key": key,
+                            }
+                        },
+                    }
+                )
+
         return container
 
     def _add_volume_mounts(self, container: dict):
@@ -418,9 +421,7 @@ def send_message_command(env_vars: dict) -> str:
 
 def get_env_vars(
     local_env_vars: list[str],
-    secrets_env_vars: list[str],
     load_dotenv: bool = False,
-    namespace: str = "informatics",
 ) -> dict[str, str]:
     """Get environment variables from local environment and secrets."""
 
@@ -440,20 +441,27 @@ def get_env_vars(
             logger.warning(
                 f"Environment variable {var_name} not found in local environment"
             )
+    return env_vars
 
-    for secret_name in secrets_env_vars:
+
+def get_secret_env_vars(
+    secrets_names: list[str],
+    namespace: str = "informatics",
+) -> dict[str, str]:
+    """
+    Get secret environment variables from Kubernetes secrets
+    """
+    secrets_env_vars = {}
+    for secret_name in secrets_names:
         try:
             v1 = client.CoreV1Api()
             secret = v1.read_namespaced_secret(name=secret_name, namespace=namespace)
-            for key, value in secret.data.items():
-                decoded_value = base64.b64decode(value).decode("utf-8")
-                if key in env_vars:
+            for key in secret.data.keys():
+                if key in secrets_env_vars:
                     logger.warning(f"Key {key} already set in env_vars.")
-                env_vars[key] = decoded_value
+                secrets_env_vars[key] = secret_name
         except Exception as e:
             logger.warning(f"Error reading secret {secret_name}: {e}")
-
-    return env_vars
 
 
 @app.command()
@@ -502,10 +510,12 @@ def launch(
             logger.info(f"Command: {cmd}")
 
         # Get local environment variables
-        env_vars = get_env_vars(
+        env_vars_dict = get_env_vars(
             local_env_vars=local_env_vars,
-            secrets_env_vars=secrets_env_vars,
             load_dotenv=load_dotenv,
+        )
+        secrets_env_vars_dict = get_secret_env_vars(
+            secrets_names=secrets_env_vars,
             namespace=namespace,
         )
 
@@ -520,8 +530,9 @@ def launch(
             gpu_product=gpu_product,
             backoff_limit=0,
             command=["/bin/bash", "-c", "--"],
-            args=[send_message_command(env_vars) + cmd],
-            env_vars=env_vars,
+            args=[send_message_command(env_vars_dict) + cmd],
+            env_vars=env_vars_dict,
+            secret_env_vars=secrets_env_vars_dict,
             user_email=email,
             namespace=namespace,
             kueue_queue_name=queue_name,

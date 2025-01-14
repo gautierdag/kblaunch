@@ -1,4 +1,3 @@
-import base64
 from unittest.mock import MagicMock, mock_open, patch
 
 import pytest
@@ -8,13 +7,12 @@ from loguru import logger
 from typer.testing import CliRunner
 
 from kblaunch.cli import (
+    KubernetesJob,
     app,
     check_if_completed,
-    # export_env_vars,
+    fetch_user_info,
     get_env_vars,
     send_message_command,
-    KubernetesJob,
-    fetch_user_info,
 )
 
 
@@ -96,25 +94,16 @@ def test_check_if_completed(mock_k8s_client):
 def test_get_env_vars(mock_env_vars, mock_k8s_client):
     """Test environment variable collection."""
     core_api = mock_k8s_client["core_api"]
-    secret_data = base64.b64encode(b"secret").decode("utf-8")
 
     # Mock secret response
     mock_secret = MagicMock()
-    mock_secret.data = {"SECRET_KEY": secret_data}
+    mock_secret.data = {"SECRET_KEY": "secret_data"}
     core_api.read_namespaced_secret.return_value = mock_secret
 
-    # Test with only local env vars first
     env_vars = get_env_vars(
-        local_env_vars=["TEST_VAR"], secrets_env_vars=[], namespace="test"
+        local_env_vars=["TEST_VAR"],
     )
     assert env_vars["TEST_VAR"] == "test_value"
-
-    # Test with secret
-    env_vars = get_env_vars(
-        local_env_vars=[], secrets_env_vars=["test-secret"], namespace="test"
-    )
-    assert "SECRET_KEY" in env_vars
-    assert env_vars["SECRET_KEY"] == "secret"
 
 
 def test_send_message_command():
