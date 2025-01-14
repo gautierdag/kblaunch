@@ -406,7 +406,7 @@ def check_if_completed(job_name: str, namespace: str = "informatics") -> bool:
     return is_completed
 
 
-def send_message_command(env_vars: dict) -> str:
+def send_message_command(env_vars: set) -> str:
     """
     Send a message to Slack when the job starts if the SLACK_WEBHOOK environment variable is set.
     """
@@ -521,11 +521,15 @@ def launch(
         )
 
         # Check for overlapping keys in local and secret environment variables
-        union = set(secrets_env_vars_dict.keys()).intersection(env_vars_dict.keys())
-        if union:
+        intersection = set(secrets_env_vars_dict.keys()).intersection(
+            env_vars_dict.keys()
+        )
+        if intersection:
             logger.warning(
-                f"Overlapping keys in local and secret environment variables: {union}"
+                f"Overlapping keys in local and secret environment variables: {intersection}"
             )
+        # Combine the environment variables
+        union = set(secrets_env_vars_dict.keys()).union(env_vars_dict.keys())
 
         logger.info(f"Creating job for: {cmd}")
         job = KubernetesJob(
@@ -538,7 +542,7 @@ def launch(
             gpu_product=gpu_product,
             backoff_limit=0,
             command=["/bin/bash", "-c", "--"],
-            args=[send_message_command(env_vars_dict) + cmd],
+            args=[send_message_command(union) + cmd],
             env_vars=env_vars_dict,
             secret_env_vars=secrets_env_vars_dict,
             user_email=email,
