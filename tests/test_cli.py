@@ -10,7 +10,6 @@ from kblaunch.cli import (
     KubernetesJob,
     app,
     check_if_completed,
-    fetch_user_info,
     get_env_vars,
     send_message_command,
 )
@@ -255,32 +254,6 @@ def test_kubernetes_job_generate_yaml(basic_job):
         job_dict["spec"]["template"]["spec"]["containers"][0]["image"]
         == "test-image:latest"
     )
-
-
-@patch("os.getlogin")
-@patch("pwd.getpwnam")
-@patch("os.getgrouplist")
-@patch("grp.getgrgid")
-def test_fetch_user_info(
-    mock_getgrgid, mock_getgrouplist, mock_getpwnam, mock_getlogin
-):
-    mock_getlogin.return_value = "testuser"
-    mock_pwnam = MagicMock()
-    mock_pwnam.pw_dir = "/home/testuser"
-    mock_pwnam.pw_shell = "/bin/bash"
-    mock_pwnam.pw_gid = 1000
-    mock_getpwnam.return_value = mock_pwnam
-    mock_getgrouplist.return_value = [1000, 1001]
-    mock_group = MagicMock()
-    mock_group.gr_name = "testgroup"
-    mock_getgrgid.return_value = mock_group
-
-    result = fetch_user_info()
-
-    assert result["login_user"] == "testuser"
-    assert result["home"] == "/home/testuser"
-    assert result["shell"] == "/bin/bash"
-    assert "testgroup testgroup" in result["groups"]
 
 
 def test_kubernetes_job_run(mock_k8s_config, mock_subprocess, basic_job):

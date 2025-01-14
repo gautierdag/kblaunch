@@ -1,6 +1,4 @@
-import grp
 import os
-import pwd
 import subprocess
 from typing import List, Optional
 
@@ -19,35 +17,9 @@ GPU_PRODUCTS = [
     "NVIDIA-A100-SXM4-40GB-MIG-1g.5gb",
     "NVIDIA-H100-80GB-HBM3",
 ]
-
+PRIORITY_CLASSES = ["default", "batch", "short"]
 
 app = typer.Typer()
-
-
-def fetch_user_info() -> dict:
-    try:
-        user_info = {}
-
-        # Get the current user name
-        user_info["login_user"] = os.getlogin()
-
-        # Get user entry from /etc/passwd
-        pw_entry = pwd.getpwnam(os.getlogin())
-
-        # Extracting home directory and shell from the password entry
-        user_info["home"] = pw_entry.pw_dir
-        user_info["shell"] = pw_entry.pw_shell
-
-        # Get group IDs
-        group_ids = os.getgrouplist(os.getlogin(), pw_entry.pw_gid)
-
-        # Get group names from group IDs
-        user_info["groups"] = " ".join([grp.getgrgid(gid).gr_name for gid in group_ids])
-        return user_info
-
-    except Exception as e:
-        logger.exception(f"Error fetching user info: {e}")
-        return {}
 
 
 class KubernetesJob:
@@ -74,10 +46,9 @@ class KubernetesJob:
         privileged_security_context: bool = False,
         user_name: Optional[str] = None,
         user_email: Optional[str] = None,
-        labels: Optional[dict] = None,
-        annotations: Optional[dict] = None,
         namespace: Optional[str] = None,
         image_pull_secret: Optional[str] = None,
+        priority: str = "default",
     ):
         # Validate gpu_limit first
         assert (
@@ -126,26 +97,23 @@ class KubernetesJob:
         self.user_email = user_email  # This is now a required field.
         self.kueue_queue_name = kueue_queue_name
 
+        assert (
+            priority in PRIORITY_CLASSES
+        ), f"priority_class_name must be one of {PRIORITY_CLASSES}, not {priority}"
+        if priority == "high" and (self.gpu_limit > 1 or "H100" in self.gpu_product):
+            logger.error(
+                "Priority class 'high' is not allowed for multi-GPU jobs or H100 GPUs."
+            )
+            logger.error("Using 'default' priority class instead.")
+            priority = "default"
+
         self.labels = {
             "eidf/user": self.user_name,
+            "eidf/email": self.user_email,
             "kueue.x-k8s.io/queue-name": self.kueue_queue_name,
+            "kueue.x-k8s.io/priority-class": f"{priority}-workload-priority",
         }
-
-        if labels is not None:
-            self.labels.update(labels)
-
-        self.annotations = {"eidf/user": self.user_name}
-        if user_email is not None:
-            self.annotations["eidf/email"] = user_email
-
-        if annotations is not None:
-            self.annotations.update(annotations)
-
-        self.user_info = fetch_user_info()
-        self.annotations.update(self.user_info)
-        logger.info(f"labels {self.labels}")
-        logger.info(f"annotations {self.annotations}")
-
+        self.annotations = {"eidf/user": self.user_name, "eidf/email": self.user_email}
         self.namespace = namespace
 
     def _add_shm_size(self, container: dict):
@@ -493,6 +461,7 @@ def launch(
     ),
     nfs_server: str = typer.Option("10.24.1.255", help="NFS server"),
     dry_run: bool = typer.Option(False, help="Dry run"),
+    priority: str = typer.Option("default", help="Priority class name"),
 ):
     """Launch a Kubernetes job with the specified configuration."""
 
@@ -551,6 +520,7 @@ def launch(
             volume_mounts={
                 "nfs": {"mountPath": "/nfs", "server": nfs_server, "path": "/"}
             },
+            priority=priority,
         )
         job_yaml = job.generate_yaml()
         logger.info(job_yaml)
