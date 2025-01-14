@@ -99,34 +99,34 @@ class KubernetesJob:
         namespace: Optional[str] = None,
         image_pull_secret: Optional[str] = None,
     ):
+        # Validate gpu_limit first
+        assert gpu_limit is not None, f"gpu_limit must be set to a value between 1 and {MAX_GPU}, not {gpu_limit}"
+        assert 0 < gpu_limit <= MAX_GPU, f"gpu_limit must be between 1 and {MAX_GPU}, got {gpu_limit}"
+        
         self.name = name
-
         self.image = image
         self.command = command
         self.args = args
-        self.cpu_request = cpu_request if cpu_request else 12 * gpu_limit
-        self.ram_request = ram_request if ram_request else f"{80 * gpu_limit}G"
-        self.storage_request = storage_request
+        self.gpu_limit = gpu_limit
         self.gpu_type = gpu_type
         self.gpu_product = gpu_product
-        assert (
-            gpu_limit is not None
-        ), f"gpu_limit must be set to a value between 1 and {MAX_GPU}, not {gpu_limit}"
-        assert (
-            gpu_limit > 0
-        ), f"gpu_limit must be set to a value between 1 and {MAX_GPU}, not {gpu_limit}"
-        assert self.cpu_request <= MAX_CPU, f"cpu_request must be less than {MAX_CPU}"
-
-        self.gpu_limit = gpu_limit
-        self.backoff_limit = backoff_limit
-        self.restart_policy = restart_policy
+        
+        self.cpu_request = cpu_request if cpu_request else 12 * gpu_limit
+        self.ram_request = ram_request if ram_request else f"{80 * gpu_limit}G"
+        assert int(self.cpu_request) <= MAX_CPU, f"cpu_request must be less than {MAX_CPU}"
+        
+        # Safe calculation for shm_size with fallback
         self.shm_size = (
             shm_size
             if shm_size is not None
             else ram_request
             if ram_request is not None
-            else f"{MAX_RAM // (MAX_GPU - gpu_limit + 1)}G"
+            else f"{max(1, MAX_RAM // gpu_limit)}G"  # Ensure minimum 1G and avoid division by zero
         )
+
+        self.storage_request = storage_request
+        self.backoff_limit = backoff_limit
+        self.restart_policy = restart_policy
         self.secret_env_vars = secret_env_vars
         self.image_pull_secret = image_pull_secret
         self.env_vars = env_vars
