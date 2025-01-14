@@ -148,6 +148,7 @@ def launch(
         True, help="Load environment variables from .env file"
     ),
     nfs_server: str = typer.Option("10.24.1.255", help="NFS server"),
+    dry_run: bool = typer.Option(False, help="Dry run"),
 ):
     """Launch a Kubernetes job with the specified configuration."""
 
@@ -195,7 +196,8 @@ def launch(
         job_yaml = job.generate_yaml()
         logger.info(job_yaml)
         # Run the Job on the Kubernetes cluster
-        job.run()
+        if not dry_run:
+            job.run()
     else:
         logger.info(f"Job '{job_name}' is still running.")
 
