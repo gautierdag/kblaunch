@@ -1,7 +1,8 @@
 import base64
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, mock_open, patch
 
 import pytest
+import yaml
 from kubernetes import client, config
 from loguru import logger
 from typer.testing import CliRunner
@@ -9,9 +10,11 @@ from typer.testing import CliRunner
 from kblaunch.cli import (
     app,
     check_if_completed,
-    export_env_vars,
+    # export_env_vars,
     get_env_vars,
     send_message_command,
+    KubernetesJob,
+    fetch_user_info,
 )
 
 
@@ -64,11 +67,8 @@ def mock_kubernetes_job(monkeypatch):
         def run(self):
             return None
 
-    monkeypatch.setattr("kblaunch.kubejobs.KubernetesJob", MockKubernetesJob)
+    monkeypatch.setattr("kblaunch.cli.KubernetesJob", MockKubernetesJob)
     return mock_job
-
-
-runner = CliRunner()
 
 
 def test_check_if_completed(mock_k8s_client):
@@ -117,22 +117,12 @@ def test_get_env_vars(mock_env_vars, mock_k8s_client):
     assert env_vars["SECRET_KEY"] == "secret"
 
 
-def test_export_env_vars():
-    """Test environment variable export command generation."""
-    env_vars = {"TEST_VAR": "test value", "PATH": "/usr/local/bin"}
-
-    result = export_env_vars(env_vars)
-    assert "export TEST_VAR='test value'" in result
-    assert "export PATH='/usr/local/bin'" in result
-    assert result.endswith(" ; ")
-
-
 def test_send_message_command():
     """Test Slack message command generation."""
     env_vars = {"SLACK_WEBHOOK": "https://hooks.slack.com/test"}
     result = send_message_command(env_vars)
     assert "curl -X POST" in result
-    assert "hooks.slack.com/test" in result
+    assert "$SLACK_WEBHOOK" in result
 
 
 @pytest.mark.parametrize("interactive", [True, False])
@@ -230,3 +220,104 @@ def test_launch_invalid_params():
     )
 
     assert result.exit_code != 0
+
+
+@pytest.fixture
+def mock_k8s_config():
+    with patch("kubernetes.config.load_kube_config"):
+        yield
+
+
+@pytest.fixture
+def mock_subprocess():
+    with patch("subprocess.run") as mock_run:
+        mock_run.return_value.returncode = 0
+        yield mock_run
+
+
+@pytest.fixture
+def basic_job():
+    return KubernetesJob(
+        name="test-job",
+        image="test-image:latest",
+        kueue_queue_name="test-queue",
+        gpu_limit=1,
+        gpu_type="nvidia.com/gpu",
+        gpu_product="NVIDIA-A100-SXM4-40GB",
+        user_email="test@example.com",
+    )
+
+
+def test_kubernetes_job_init(basic_job):
+    assert basic_job.name == "test-job"
+    assert basic_job.image == "test-image:latest"
+    assert basic_job.gpu_limit == 1
+    assert basic_job.cpu_request == 12  # Default CPU request for 1 GPU
+    assert basic_job.ram_request == "80G"  # Default RAM request for 1 GPU
+
+
+def test_kubernetes_job_generate_yaml(basic_job):
+    yaml_output = basic_job.generate_yaml()
+    job_dict = yaml.safe_load(yaml_output)
+
+    assert job_dict["kind"] == "Job"
+    assert job_dict["metadata"]["name"] == "test-job"
+    assert (
+        job_dict["spec"]["template"]["spec"]["containers"][0]["image"]
+        == "test-image:latest"
+    )
+
+
+@patch("os.getlogin")
+@patch("pwd.getpwnam")
+@patch("os.getgrouplist")
+@patch("grp.getgrgid")
+def test_fetch_user_info(
+    mock_getgrgid, mock_getgrouplist, mock_getpwnam, mock_getlogin
+):
+    mock_getlogin.return_value = "testuser"
+    mock_pwnam = MagicMock()
+    mock_pwnam.pw_dir = "/home/testuser"
+    mock_pwnam.pw_shell = "/bin/bash"
+    mock_pwnam.pw_gid = 1000
+    mock_getpwnam.return_value = mock_pwnam
+    mock_getgrouplist.return_value = [1000, 1001]
+    mock_group = MagicMock()
+    mock_group.gr_name = "testgroup"
+    mock_getgrgid.return_value = mock_group
+
+    result = fetch_user_info()
+
+    assert result["login_user"] == "testuser"
+    assert result["home"] == "/home/testuser"
+    assert result["shell"] == "/bin/bash"
+    assert "testgroup testgroup" in result["groups"]
+
+
+def test_kubernetes_job_run(mock_k8s_config, mock_subprocess, basic_job):
+    with patch("builtins.open", mock_open()) as mock_file, patch(
+        "os.remove"
+    ) as mock_remove:
+        result = basic_job.run()
+
+    assert result == 0
+    mock_subprocess.assert_called_once()
+    mock_file().write.assert_called_once()
+    mock_remove.assert_called_once_with("temp_job.yaml")
+
+
+@pytest.mark.parametrize("gpu_limit", [-1, 0, 9])
+def test_invalid_gpu_limit(gpu_limit):
+    with pytest.raises(AssertionError):
+        KubernetesJob(
+            name="test-job",
+            image="test-image:latest",
+            kueue_queue_name="test-queue",
+            gpu_limit=gpu_limit,
+            gpu_type="nvidia.com/gpu",
+            gpu_product="NVIDIA-A100-SXM4-40GB",
+            user_email="test@example.com",
+        )
+
+
+runner = CliRunner()
