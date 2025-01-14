@@ -8,6 +8,14 @@ from loguru import logger
 
 app = typer.Typer()
 
+GPU_PRODUCTS = [
+    "NVIDIA-A100-SXM4-80GB",
+    "NVIDIA-A100-SXM4-40GB",
+    "NVIDIA-A100-SXM4-40GB-MIG-3g.20gb",
+    "NVIDIA-A100-SXM4-40GB-MIG-1g.5gb",
+    "NVIDIA-H100-80GB-HBM3",
+]
+
 
 def check_if_completed(job_name: str, namespace: str = "informatics") -> bool:
     # Load the kube config
@@ -57,7 +65,8 @@ def send_message_command(env_vars: dict) -> str:
         return ""
     webhook = env_vars["SLACK_WEBHOOK"]
     return (
-        """curl -X POST -H 'Content-type: application/json' --data '{"text":"Job started in '"$POD_NAME"'"}' """
+        """apt-get install -y curl;"""  # Install the curl command
+        + """curl -X POST -H 'Content-type: application/json' --data '{"text":"Job started in '"$POD_NAME"'"}' """
         + webhook
         + " ; "
     )
@@ -126,7 +135,7 @@ def launch(
     cpu_request: str = typer.Option("1", help="CPU request"),
     ram_request: str = typer.Option("8Gi", help="RAM request"),
     gpu_limit: int = typer.Option(1, help="GPU limit"),
-    gpu_product: str = typer.Option("NVIDIA-A100-SXM4-80GB", help="GPU product"),
+    gpu_product: str = typer.Option("NVIDIA-A100-SXM4-40GB", help="GPU product"),
     secrets_env_vars: list[str] = typer.Option(
         [],  # Use empty list as default instead of None
         help="List of secret environment variables to export to the container",
@@ -138,10 +147,14 @@ def launch(
     load_dotenv: bool = typer.Option(
         True, help="Load environment variables from .env file"
     ),
+    nfs_server: str = typer.Option("10.24.1.255", help="NFS server"),
 ):
     """Launch a Kubernetes job with the specified configuration."""
 
     is_completed = check_if_completed(job_name, namespace=namespace)
+
+    if gpu_product not in GPU_PRODUCTS:
+        logger.warning(f"GPU product {gpu_product} likely supported.")
 
     if is_completed is True:
         logger.info(f"Job '{job_name}' is completed. Launching a new job.")
@@ -176,7 +189,7 @@ def launch(
             namespace=namespace,
             kueue_queue_name=queue_name,
             volume_mounts={
-                "nfs": {"mountPath": "/nfs", "server": "10.24.1.255", "path": "/"}
+                "nfs": {"mountPath": "/nfs", "server": nfs_server, "path": "/"}
             },
         )
         job_yaml = job.generate_yaml()
