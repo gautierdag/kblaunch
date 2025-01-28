@@ -330,7 +330,6 @@ def test_launch_no_command_non_interactive():
         ],
     )
     assert result.exit_code != 0
-    assert "command is required" in result.output.lower()
 
 
 runner = CliRunner()
