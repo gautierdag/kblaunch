@@ -22,6 +22,7 @@ class GPU_PRODUCTS(str, Enum):
 
 
 PRIORITY_CLASSES = ["default", "batch", "short"]
+NFS_SERVER = os.getenv("INFK8S_NFS_SERVER_IP", "10.24.1.255")
 
 app = typer.Typer()
 
@@ -288,11 +289,16 @@ class KubernetesJob:
         if self.volume_mounts:
             for mount_name, mount_data in self.volume_mounts.items():
                 volume = {"name": mount_name}
-
                 if "pvc" in mount_data:
                     volume["persistentVolumeClaim"] = {"claimName": mount_data["pvc"]}
                 elif "emptyDir" in mount_data:
                     volume["emptyDir"] = {}
+                elif "nfs" in mount_data:
+                    volume["nfs"] = {
+                        "server": mount_data["nfs"]["server"],
+                        "path": mount_data["nfs"]["path"],
+                    }
+
                 # Add more volume types here if needed
                 job["spec"]["template"]["spec"]["volumes"].append(volume)
 
@@ -479,7 +485,7 @@ def launch(
     load_dotenv: bool = typer.Option(
         True, help="Load environment variables from .env file"
     ),
-    nfs_server: str = typer.Option("10.24.1.255", help="NFS server"),
+    nfs_server: str = typer.Option(NFS_SERVER, help="NFS server"),
     dry_run: bool = typer.Option(False, help="Dry run"),
     priority: str = typer.Option("default", help="Priority class name"),
     vscode: bool = typer.Option(False, help="Install VS Code CLI in the container"),
