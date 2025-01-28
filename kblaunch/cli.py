@@ -289,15 +289,14 @@ class KubernetesJob:
         if self.volume_mounts:
             for mount_name, mount_data in self.volume_mounts.items():
                 volume = {"name": mount_name}
-                if "pvc" in mount_data:
-                    volume["persistentVolumeClaim"] = {"claimName": mount_data["pvc"]}
-                elif "emptyDir" in mount_data:
-                    volume["emptyDir"] = {}
-                elif "nfs" in mount_data:
+                if mount_name == "nfs":
                     volume["nfs"] = {
-                        "server": mount_data["nfs"]["server"],
-                        "path": mount_data["nfs"]["path"],
+                        "server": mount_data["server"],
+                        "path": mount_data["path"],
                     }
+                # TODO: verify if this works for pvc
+                elif mount_name == "pvc":
+                    volume["persistentVolumeClaim"] = {"claimName": mount_data}
 
                 # Add more volume types here if needed
                 job["spec"]["template"]["spec"]["volumes"].append(volume)
