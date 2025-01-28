@@ -541,7 +541,7 @@ def launch(
             image=docker_image,
             gpu_type="nvidia.com/gpu",
             gpu_limit=gpu_limit,
-            gpu_product=gpu_product,
+            gpu_product=gpu_product.value,
             backoff_limit=0,
             command=["/bin/bash", "-c", "--"],
             args=[full_cmd],
