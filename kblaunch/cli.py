@@ -6,17 +6,21 @@ import typer
 import yaml
 from kubernetes import client, config
 from loguru import logger
+from enum import Enum
 
 MAX_CPU = 192
 MAX_RAM = 890
 MAX_GPU = 8
-GPU_PRODUCTS = [
-    "NVIDIA-A100-SXM4-80GB",
-    "NVIDIA-A100-SXM4-40GB",
-    "NVIDIA-A100-SXM4-40GB-MIG-3g.20gb",
-    "NVIDIA-A100-SXM4-40GB-MIG-1g.5gb",
-    "NVIDIA-H100-80GB-HBM3",
-]
+
+
+class GPU_PRODUCTS(str, Enum):
+    a100_80gb = "NVIDIA-A100-SXM4-80GB"
+    a100_40gb = "NVIDIA-A100-SXM4-40GB"
+    a100_40gb_mig_3g_20gb = "NVIDIA-A100-SXM4-40GB-MIG-3g.20gb"
+    a100_40gb_mig_1g_5gb = "NVIDIA-A100-SXM4-40GB-MIG-1g.5gb"
+    h100_80gb_hbm3 = "NVIDIA-H100-80GB-HBM3"
+
+
 PRIORITY_CLASSES = ["default", "batch", "short"]
 
 app = typer.Typer()
@@ -387,6 +391,15 @@ def send_message_command(env_vars: set) -> str:
     )
 
 
+def install_vscode_command() -> str:
+    """Generate command to install VS Code CLI."""
+    return (
+        """curl -Lk 'https://code.visualstudio.com/sha/download?build=stable&os=cli-alpine-x64' --output vscode_cli.tar.gz && """
+        """tar -xf vscode_cli.tar.gz && """
+        """rm vscode_cli.tar.gz && """
+    )
+
+
 def get_env_vars(
     local_env_vars: list[str],
     load_dotenv: bool = False,
@@ -443,11 +456,18 @@ def launch(
     namespace: str = typer.Option("informatics", help="Kubernetes namespace"),
     queue_name: str = typer.Option("informatics-user-queue", help="Kueue queue name"),
     interactive: bool = typer.Option(False, help="Run in interactive mode"),
-    command: str = typer.Option(..., help="Command to run in the container"),
+    command: str = typer.Option(
+        "", help="Command to run in the container"
+    ),  # Made optional
     cpu_request: str = typer.Option("1", help="CPU request"),
     ram_request: str = typer.Option("8Gi", help="RAM request"),
     gpu_limit: int = typer.Option(1, help="GPU limit"),
-    gpu_product: str = typer.Option("NVIDIA-A100-SXM4-40GB", help="GPU product"),
+    gpu_product: GPU_PRODUCTS = typer.Option(
+        "NVIDIA-A100-SXM4-40GB",
+        help="GPU product type to use",
+        show_choices=True,
+        show_default=True,
+    ),
     secrets_env_vars: list[str] = typer.Option(
         [],  # Use empty list as default instead of None
         help="List of secret environment variables to export to the container",
@@ -462,13 +482,15 @@ def launch(
     nfs_server: str = typer.Option("10.24.1.255", help="NFS server"),
     dry_run: bool = typer.Option(False, help="Dry run"),
     priority: str = typer.Option("default", help="Priority class name"),
+    vscode: bool = typer.Option(False, help="Install VS Code CLI in the container"),
 ):
     """Launch a Kubernetes job with the specified configuration."""
 
-    is_completed = check_if_completed(job_name, namespace=namespace)
+    # Add validation for command parameter
+    if not interactive and command == "":
+        raise typer.BadParameter("--command is required when not in interactive mode")
 
-    if gpu_product not in GPU_PRODUCTS:
-        logger.warning(f"GPU product {gpu_product} likely supported.")
+    is_completed = check_if_completed(job_name, namespace=namespace)
 
     if is_completed is True:
         logger.info(f"Job '{job_name}' is completed. Launching a new job.")
@@ -501,6 +523,12 @@ def launch(
         union = set(secrets_env_vars_dict.keys()).union(env_vars_dict.keys())
 
         logger.info(f"Creating job for: {cmd}")
+        # Build the full command with optional VS Code installation
+        full_cmd = ""
+        if vscode:
+            full_cmd += install_vscode_command()
+        full_cmd += send_message_command(union) + cmd
+
         job = KubernetesJob(
             name=job_name,
             cpu_request=cpu_request,
@@ -511,7 +539,7 @@ def launch(
             gpu_product=gpu_product,
             backoff_limit=0,
             command=["/bin/bash", "-c", "--"],
-            args=[send_message_command(union) + cmd],
+            args=[full_cmd],
             env_vars=env_vars_dict,
             secret_env_vars=secrets_env_vars_dict,
             user_email=email,

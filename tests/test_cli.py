@@ -197,6 +197,42 @@ def test_launch_with_env_vars(mock_kubernetes_job, mock_k8s_client):
     mock_job_instance.run.assert_called_once()
 
 
+@patch("kblaunch.cli.KubernetesJob")
+def test_launch_with_vscode(mock_kubernetes_job, mock_k8s_client):
+    """Test launch command with VS Code installation."""
+    # Setup mock instance
+    mock_job_instance = mock_kubernetes_job.return_value
+    mock_job_instance.generate_yaml.return_value = "dummy: yaml"
+    mock_job_instance.run.return_value = None
+
+    # Mock job completion check
+    batch_api = mock_k8s_client["batch_api"]
+    batch_api.list_namespaced_job.return_value.items = []
+
+    result = runner.invoke(
+        app,
+        [
+            "--email",
+            "test@example.com",
+            "--job-name",
+            "test-job",
+            "--command",
+            "python test.py",
+            "--vscode",
+        ],
+    )
+
+    assert result.exit_code == 0
+    mock_kubernetes_job.assert_called_once()
+
+    # Verify VS Code installation command was included
+    job_args = mock_kubernetes_job.call_args[1]
+    assert (
+        "curl -Lk 'https://code.visualstudio.com/sha/download?build=stable&os=cli-alpine-x64'"
+        in job_args["args"][0]
+    )
+
+
 def test_launch_invalid_params():
     """Test launch command with invalid parameters."""
     result = runner.invoke(
@@ -280,6 +316,21 @@ def test_invalid_gpu_limit(gpu_limit):
             gpu_product="NVIDIA-A100-SXM4-40GB",
             user_email="test@example.com",
         )
+
+
+def test_launch_no_command_non_interactive():
+    """Test launch command fails when no command is provided in non-interactive mode."""
+    result = runner.invoke(
+        app,
+        [
+            "--email",
+            "test@example.com",
+            "--job-name",
+            "test-job",
+        ],
+    )
+    assert result.exit_code != 0
+    assert "command is required" in result.output.lower()
 
 
 runner = CliRunner()
