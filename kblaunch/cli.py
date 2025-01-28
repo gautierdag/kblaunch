@@ -292,7 +292,7 @@ class KubernetesJob:
                 if mount_name == "nfs":
                     volume["nfs"] = {
                         "server": mount_data["server"],
-                        "path": mount_data["path"],
+                        "path": mount_data["mountPath"],
                     }
                 # TODO: verify if this works for pvc
                 elif mount_name == "pvc":
