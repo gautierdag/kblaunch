@@ -27,13 +27,20 @@ uvx kblaunch --help
 
 ## Usage
 
+### Setup
+
+Run the setup command to configure the tool (email and slack webhook):
+
+```bash
+kblaunch setup
+```
+
 ### Basic Usage
 
 Launch a simple job:
 
 ```bash
-kblaunch \
-    --email your.email@ed.ac.uk \
+kblaunch launch
     --job-name myjob \
     --command "python script.py"
 ```
@@ -43,7 +50,7 @@ kblaunch \
 1. From local environment:
 
     ```bash
-    kblaunch \
+    kblaunch launch \
         --job-name myjob \
         --command "python script.py" \
         --local-env-vars PATH \
@@ -53,7 +60,7 @@ kblaunch \
 2. From Kubernetes secrets:
 
     ```bash
-    kblaunch \
+    kblaunch launch \
         --job-name myjob \
         --command "python script.py" \
         --secrets-env-vars mysecret1 \
@@ -63,7 +70,7 @@ kblaunch \
 3. From .env file:
 
     ```bash
-    kblaunch \
+    kblaunch launch \
         --job-name myjob \
         --command "python script.py" \
         --load-dotenv
@@ -74,7 +81,7 @@ kblaunch \
 Specify GPU requirements:
 
 ```bash
-kblaunch \
+kblaunch launch \
     --job-name gpu-job \
     --command "python train.py" \
     --gpu-limit 2 \
@@ -86,20 +93,20 @@ kblaunch \
 Launch an interactive job:
 
 ```bash
-kblaunch \
+kblaunch launch \
     --job-name interactive \
     --interactive
 ```
 
 ## Options
 
-- `--email`: User email [required]
+- `--email`: User email
 - `--job-name`: Name of the Kubernetes job [required]
 - `--docker-image`: Docker image (default: "nvcr.io/nvidia/cuda:12.0.0-devel-ubuntu22.04")
 - `--namespace`: Kubernetes namespace (default: "informatics")
 - `--queue-name`: Kueue queue name
 - `--interactive`: Run in interactive mode (default: False)
-- `--command`: Command to run in the container [required]
+- `--command`: Command to run in the container [required if not interactive]
 - `--cpu-request`: CPU request (default: "1")
 - `--ram-request`: RAM request (default: "8Gi")
 - `--gpu-limit`: GPU limit (default: 1)

@@ -51,6 +51,24 @@ NFS_SERVER = os.getenv("INFK8S_NFS_SERVER_IP", "10.24.1.255")
 app = typer.Typer()
 
 
+def is_mig_gpu(gpu_product: str) -> bool:
+    """Check if the GPU product is a MIG instance."""
+    return "MIG" in gpu_product
+
+
+def validate_gpu_constraints(gpu_product: str, gpu_limit: int, priority: str):
+    """Validate GPU constraints for MIG and H100 instances."""
+    # Check MIG constraint
+    if is_mig_gpu(gpu_product) and gpu_limit > 1:
+        raise ValueError("Cannot request more than one MIG instance in a single job")
+
+    # Check H100 priority constraint
+    if "H100" in gpu_product and priority == "short":
+        raise ValueError(
+            "Cannot request H100 GPUs in the short-workload-high-priority class"
+        )
+
+
 class KubernetesJob:
     def __init__(
         self,
@@ -575,6 +593,12 @@ def launch(
 
     if is_completed is True:
         logger.info(f"Job '{job_name}' is completed. Launching a new job.")
+
+        # Validate GPU constraints before creating job
+        try:
+            validate_gpu_constraints(gpu_product.value, gpu_limit, priority)
+        except ValueError as e:
+            raise typer.BadParameter(str(e))
 
         if interactive:
             cmd = "while true; do sleep 60; done;"
