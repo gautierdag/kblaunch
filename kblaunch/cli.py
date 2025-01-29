@@ -79,22 +79,16 @@ class KubernetesJob:
         args: Optional[List[str]] = None,
         cpu_request: Optional[str] = None,
         ram_request: Optional[str] = None,
-        storage_request: Optional[str] = None,
         gpu_type: Optional[str] = None,
         gpu_product: Optional[str] = None,
         gpu_limit: Optional[int] = None,
-        backoff_limit: int = 4,
-        restart_policy: str = "Never",
-        shm_size: Optional[str] = None,
         env_vars: Optional[dict] = None,
         secret_env_vars: Optional[dict] = None,
-        volume_mounts: Optional[dict] = None,
-        job_deadlineseconds: Optional[int] = None,
-        privileged_security_context: bool = False,
+        nfs_server: str = NFS_SERVER,
+        pvc_name: Optional[str] = None,
         user_name: Optional[str] = None,
         user_email: Optional[str] = None,
         namespace: Optional[str] = None,
-        image_pull_secret: Optional[str] = None,
         priority: str = "default",
     ):
         # Validate gpu_limit first
@@ -119,26 +113,33 @@ class KubernetesJob:
             int(self.cpu_request) <= MAX_CPU
         ), f"cpu_request must be less than {MAX_CPU}"
 
-        # Safe calculation for shm_size with fallback
-        self.shm_size = (
-            shm_size
-            if shm_size is not None
-            else ram_request
-            if ram_request is not None
-            else f"{max(1, MAX_RAM // gpu_limit)}G"  # Ensure minimum 1G and avoid division by zero
-        )
+        self.volume_mounts = [
+            {"name": "workspace", "mountPath": "/workspace", "readOnly": True},
+            {"name": "publicdata", "mountPath": "/public", "readOnly": True},
+            {"name": "dshm", "mountPath": "/dev/shm"},
+        ]
+        if pvc_name is not None:
+            self.volume_mounts.append({"name": "writeable", "mountPath": "/pvc"})
+
+        USER = os.getenv("USER", "unknown")
+        self.volumes = [
+            {
+                "name": "workspace",
+                "nfs": {"path": f"/user/{USER}", "server": nfs_server},
+            },
+            {
+                "name": "publicdata",
+                "nfs": {"path": "/public", "server": nfs_server},
+            },
+            {"name": "dshm", "emptyDir": {"medium": "Memory"}},
+        ]
+        if pvc_name is not None:
+            self.volumes.append(
+                {"name": "writeable", "persistentVolumeClaim": {"claimName": pvc_name}}
+            )
 
         self.env_vars = env_vars
         self.secret_env_vars = secret_env_vars
-
-        self.storage_request = storage_request
-        self.backoff_limit = backoff_limit
-        self.restart_policy = restart_policy
-        self.image_pull_secret = image_pull_secret
-
-        self.volume_mounts = volume_mounts
-        self.job_deadlineseconds = job_deadlineseconds
-        self.privileged_security_context = privileged_security_context
 
         self.user_name = user_name or os.environ.get("USER", "unknown")
         self.user_email = user_email  # This is now a required field.
@@ -161,12 +162,6 @@ class KubernetesJob:
         }
         self.annotations = {"eidf/user": self.user_name, "eidf/email": self.user_email}
         self.namespace = namespace
-
-    def _add_shm_size(self, container: dict):
-        """Adds shared memory volume if shm_size is set."""
-        if self.shm_size:
-            container["volumeMounts"].append({"name": "dshm", "mountPath": "/dev/shm"})
-        return container
 
     def _add_env_vars(self, container: dict):
         """Adds secret and normal environment variables to the
@@ -200,28 +195,6 @@ class KubernetesJob:
 
         return container
 
-    def _add_volume_mounts(self, container: dict):
-        """Adds volume mounts to the container."""
-        if self.volume_mounts:
-            for mount_name, mount_data in self.volume_mounts.items():
-                container["volumeMounts"].append(
-                    {
-                        "name": mount_name,
-                        "mountPath": mount_data["mountPath"],
-                    }
-                )
-
-        return container
-
-    def _add_privileged_security_context(self, container: dict):
-        """Adds privileged security context to the container."""
-        if self.privileged_security_context:
-            container["securityContext"] = {
-                "privileged": True,
-            }
-
-        return container
-
     def generate_yaml(self):
         container = {
             "name": self.name,
@@ -245,16 +218,10 @@ class KubernetesJob:
         ):
             container["resources"] = {"limits": {f"{self.gpu_type}": self.gpu_limit}}
 
-        container = self._add_shm_size(container)
         container = self._add_env_vars(container)
-        container = self._add_volume_mounts(container)
-        container = self._add_privileged_security_context(container)
+        container["volumeMounts"] = self.volume_mounts
 
-        if (
-            self.cpu_request is not None
-            or self.ram_request is not None
-            or self.storage_request is not None
-        ):
+        if self.cpu_request is not None or self.ram_request is not None:
             if "resources" not in container:
                 container["resources"] = {"requests": {}}
 
@@ -268,9 +235,6 @@ class KubernetesJob:
         if self.ram_request is not None:
             container["resources"]["requests"]["memory"] = self.ram_request
             container["resources"]["limits"]["memory"] = self.ram_request
-
-        if self.storage_request is not None:
-            container["resources"]["requests"]["storage"] = self.storage_request
 
         if self.gpu_type is not None and self.gpu_limit is not None:
             container["resources"]["limits"][f"{self.gpu_type}"] = self.gpu_limit
@@ -291,19 +255,13 @@ class KubernetesJob:
                     },
                     "spec": {
                         "containers": [container],
-                        "restartPolicy": self.restart_policy,
+                        "restartPolicy": "Never",
                         "volumes": [],
                     },
                 },
-                "backoffLimit": self.backoff_limit,
+                "backoffLimit": 0,
             },
         }
-
-        if self.image_pull_secret:
-            job["spec"]["imagePullSecrets"] = {"name": self.image_pull_secret}
-
-        if self.job_deadlineseconds:
-            job["spec"]["activeDeadlineSeconds"] = self.job_deadlineseconds
 
         if self.namespace:
             job["metadata"]["namespace"] = self.namespace
@@ -314,34 +272,8 @@ class KubernetesJob:
             job["spec"]["template"]["spec"]["nodeSelector"] = {
                 f"{self.gpu_type}.product": self.gpu_product
             }
-        # Add shared memory volume if shm_size is set
-        if self.shm_size:
-            job["spec"]["template"]["spec"]["volumes"].append(
-                {
-                    "name": "dshm",
-                    "emptyDir": {
-                        "medium": "Memory",
-                        "sizeLimit": self.shm_size,
-                    },
-                }
-            )
 
-        # Add volumes for the volume mounts
-        if self.volume_mounts:
-            for mount_name, mount_data in self.volume_mounts.items():
-                volume = {"name": mount_name}
-                if mount_name == "nfs":
-                    volume["nfs"] = {
-                        "server": mount_data["server"],
-                        "path": mount_data["mountPath"],
-                    }
-                # TODO: verify if this works for pvc
-                elif mount_name == "pvc":
-                    volume["persistentVolumeClaim"] = {"claimName": mount_data}
-
-                # Add more volume types here if needed
-                job["spec"]["template"]["spec"]["volumes"].append(volume)
-
+        job["spec"]["template"]["spec"]["volumes"] = self.volumes
         return yaml.dump(job)
 
     def run(self):
@@ -497,6 +429,17 @@ def setup():
     """Interactive setup for kblaunch configuration."""
     config = load_config()
 
+    # validate user
+    default_user = os.getenv("USER")
+    if "user" in config:
+        default_user = config["user"]
+
+    if typer.confirm(
+        f"Would you like to set the user? (default: {default_user})", default=False
+    ):
+        user = typer.prompt("Please enter your user", default=default_user)
+        config["user"] = user
+
     # Get email
     email = typer.prompt("Please enter your email")
     config["email"] = email
@@ -561,6 +504,7 @@ def launch(
         True, help="Load environment variables from .env file"
     ),
     nfs_server: str = typer.Option(NFS_SERVER, help="NFS server"),
+    pvc_name: str = typer.Option(None, help="Persistent Volume Claim name"),
     dry_run: bool = typer.Option(False, help="Dry run"),
     priority: str = typer.Option("default", help="Priority class name"),
     vscode: bool = typer.Option(False, help="Install VS Code CLI in the container"),
@@ -584,6 +528,9 @@ def launch(
         os.environ["SLACK_WEBHOOK"] = config["slack_webhook"]
         if "SLACK_WEBHOOK" not in local_env_vars:
             local_env_vars.append("SLACK_WEBHOOK")
+
+    if "user" in config and os.getenv("USER") is None:
+        os.environ["USER"] = config["user"]
 
     # Add validation for command parameter
     if not interactive and command == "":
@@ -642,7 +589,6 @@ def launch(
             gpu_type="nvidia.com/gpu",
             gpu_limit=gpu_limit,
             gpu_product=gpu_product.value,
-            backoff_limit=0,
             command=["/bin/bash", "-c", "--"],
             args=[full_cmd],
             env_vars=env_vars_dict,
@@ -650,9 +596,8 @@ def launch(
             user_email=email,
             namespace=namespace,
             kueue_queue_name=queue_name,
-            volume_mounts={
-                "nfs": {"mountPath": "/nfs", "server": nfs_server, "path": "/"}
-            },
+            nfs_server=nfs_server,
+            pvc_name=pvc_name,
             priority=priority,
         )
         job_yaml = job.generate_yaml()

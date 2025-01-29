@@ -362,13 +362,15 @@ def test_load_config_with_file():
 
 def test_setup_command():
     """Test setup command with mock inputs."""
-    with patch("typer.confirm", side_effect=[True, True]), patch(
-        "typer.prompt", side_effect=["test@example.com", "https://hooks.slack.com/test"]
+    with patch("typer.confirm", side_effect=[True, True, True]), patch(
+        "typer.prompt",
+        side_effect=["user", "test@example.com", "https://hooks.slack.com/test"],
     ), patch("kblaunch.cli.save_config") as mock_save:
         result = runner.invoke(app, ["setup"])
         assert result.exit_code == 0
         mock_save.assert_called_once_with(
             {
+                "user": "user",
                 "email": "test@example.com",
                 "slack_webhook": "https://hooks.slack.com/test",
             }
@@ -379,19 +381,21 @@ def test_mig_gpu_validation():
     """Test MIG GPU validation."""
     # Test single MIG instance (should pass)
     validate_gpu_constraints("NVIDIA-A100-SXM4-40GB-MIG-3g.20gb", 1, "default")
-    
+
     # Test multiple MIG instances (should fail)
     with pytest.raises(ValueError, match="Cannot request more than one MIG instance"):
         validate_gpu_constraints("NVIDIA-A100-SXM4-40GB-MIG-3g.20gb", 2, "default")
+
 
 def test_h100_priority_validation():
     """Test H100 priority validation."""
     # Test H100 with default priority (should pass)
     validate_gpu_constraints("NVIDIA-H100-80GB-HBM3", 1, "default")
-    
+
     # Test H100 with short priority (should fail)
     with pytest.raises(ValueError, match="Cannot request H100 GPUs in the short"):
         validate_gpu_constraints("NVIDIA-H100-80GB-HBM3", 1, "short")
+
 
 def test_is_mig_gpu():
     """Test MIG GPU detection."""
