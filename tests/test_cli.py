@@ -1,3 +1,4 @@
+import json
 from unittest.mock import MagicMock, mock_open, patch
 
 import pytest
@@ -12,6 +13,7 @@ from kblaunch.cli import (
     check_if_completed,
     get_env_vars,
     send_message_command,
+    load_config,
 )
 
 
@@ -127,7 +129,9 @@ def test_launch_command(mock_kubernetes_job, mock_k8s_client, interactive):
     batch_api.list_namespaced_job.return_value.items = []
 
     # Prepare arguments
-    args = []
+    args = [
+        "launch",
+    ]
     if interactive:
         args.extend(["--interactive"])
     args.extend(
@@ -175,6 +179,7 @@ def test_launch_with_env_vars(mock_kubernetes_job, mock_k8s_client):
     result = runner.invoke(
         app,
         [
+            "launch",
             "--email",
             "test@example.com",
             "--job-name",
@@ -212,6 +217,7 @@ def test_launch_with_vscode(mock_kubernetes_job, mock_k8s_client):
     result = runner.invoke(
         app,
         [
+            "launch",
             "--email",
             "test@example.com",
             "--job-name",
@@ -238,6 +244,7 @@ def test_launch_invalid_params():
     result = runner.invoke(
         app,
         [
+            "launch",
             "--job-name",
             "test-job",  # Missing required params
         ],
@@ -330,6 +337,40 @@ def test_launch_no_command_non_interactive():
         ],
     )
     assert result.exit_code != 0
+
+
+def test_load_config_no_file():
+    """Test loading config when file doesn't exist."""
+    with patch("pathlib.Path.exists", return_value=False):
+        assert load_config() == {}
+
+
+def test_load_config_with_file():
+    """Test loading config from file."""
+    test_config = {
+        "email": "test@example.com",
+        "slack_webhook": "https://hooks.slack.com/test",
+    }
+    mock_open_obj = mock_open(read_data=json.dumps(test_config))
+    with patch("builtins.open", mock_open_obj):
+        with patch("pathlib.Path.exists", return_value=True):
+            config = load_config()
+            assert config == test_config
+
+
+def test_setup_command():
+    """Test setup command with mock inputs."""
+    with patch("typer.confirm", side_effect=[True, True]), patch(
+        "typer.prompt", side_effect=["test@example.com", "https://hooks.slack.com/test"]
+    ), patch("kblaunch.cli.save_config") as mock_save:
+        result = runner.invoke(app, ["setup"])
+        assert result.exit_code == 0
+        mock_save.assert_called_once_with(
+            {
+                "email": "test@example.com",
+                "slack_webhook": "https://hooks.slack.com/test",
+            }
+        )
 
 
 runner = CliRunner()

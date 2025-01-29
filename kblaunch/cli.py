@@ -1,6 +1,8 @@
 import os
 import subprocess
 from typing import List, Optional
+import json
+from pathlib import Path
 
 import typer
 import yaml
@@ -11,6 +13,28 @@ from enum import Enum
 MAX_CPU = 192
 MAX_RAM = 890
 MAX_GPU = 8
+
+CONFIG_DIR = Path.home() / ".cache" / ".kblaunch"
+CONFIG_FILE = CONFIG_DIR / "config.json"
+
+
+def load_config() -> dict:
+    """Load configuration from file."""
+    if not CONFIG_FILE.exists():
+        return {}
+    try:
+        with open(CONFIG_FILE) as f:
+            return json.load(f)
+    except json.JSONDecodeError:
+        logger.error(f"Error reading config file {CONFIG_FILE}")
+        return {}
+
+
+def save_config(config: dict):
+    """Save configuration to file."""
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    with open(CONFIG_FILE, "w") as f:
+        json.dump(config, f, indent=2)
 
 
 class GPU_PRODUCTS(str, Enum):
@@ -114,7 +138,6 @@ class KubernetesJob:
 
         self.labels = {
             "eidf/user": self.user_name,
-            "eidf/email": self.user_email,
             "kueue.x-k8s.io/queue-name": self.kueue_queue_name,
             "kueue.x-k8s.io/priority-class": f"{priority}-workload-priority",
         }
@@ -452,8 +475,43 @@ def get_secret_env_vars(
 
 
 @app.command()
+def setup():
+    """Interactive setup for kblaunch configuration."""
+    config = load_config()
+
+    # Get email
+    email = typer.prompt("Please enter your email")
+    config["email"] = email
+
+    # Get Slack webhook
+    if typer.confirm("Would you like to set up Slack notifications?", default=False):
+        webhook = typer.prompt("Enter your Slack webhook URL")
+        config["slack_webhook"] = webhook
+
+    # validate slack webhook
+    if "slack_webhook" in config:
+        # test post to slack
+        try:
+            logger.info("Sending test message to Slack")
+            import requests
+
+            message = "Hello :wave: from kblaunch"
+            response = requests.post(
+                config["slack_webhook"],
+                json={"text": message},
+            )
+            response.raise_for_status()
+        except Exception as e:
+            logger.error(f"Error sending test message to Slack: {e}")
+
+    # Save config
+    save_config(config)
+    logger.info(f"Configuration saved to {CONFIG_FILE}")
+
+
+@app.command()
 def launch(
-    email: str = typer.Option(..., help="User email"),
+    email: str = typer.Option(None, help="User email (overrides config)"),
     job_name: str = typer.Option(..., help="Name of the Kubernetes job"),
     docker_image: str = typer.Option(
         "nvcr.io/nvidia/cuda:12.0.0-devel-ubuntu22.04", help="Docker image"
@@ -490,6 +548,24 @@ def launch(
     vscode: bool = typer.Option(False, help="Install VS Code CLI in the container"),
 ):
     """Launch a Kubernetes job with the specified configuration."""
+
+    # Load config
+    config = load_config()
+
+    # Use email from config if not provided
+    if email is None:
+        email = config.get("email")
+        if email is None:
+            raise typer.BadParameter(
+                "Email not provided and not found in config. "
+                "Please provide --email or run 'kblaunch setup'"
+            )
+
+    # Add SLACK_WEBHOOK to local_env_vars if configured
+    if "slack_webhook" in config:
+        os.environ["SLACK_WEBHOOK"] = config["slack_webhook"]
+        if "SLACK_WEBHOOK" not in local_env_vars:
+            local_env_vars.append("SLACK_WEBHOOK")
 
     # Add validation for command parameter
     if not interactive and command == "":

@@ -245,7 +245,7 @@ wheels = [
 
 [[package]]
 name = "kblaunch"
-version = "0.1.10"
+version = "0.1.14"
 source = { editable = "." }
 dependencies = [
     { name = "kubernetes" },
