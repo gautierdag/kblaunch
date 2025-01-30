@@ -418,12 +418,16 @@ def send_message_command(env_vars: set) -> str:
 
     message_json = json.dumps(
         {
-            "text": "Job started in $POD_NAME. To connect to the pod, run ```kubectl exec -it $POD_NAME -- /bin/bash```."
+            "text": "Job started in ${POD_NAME}. To connect to the pod, run ```kubectl exec -it ${POD_NAME} -- /bin/bash```"
         }
+    )
+    # escape double quotes, backticks, and newlines
+    message_json = (
+        message_json.replace('"', '\\"').replace("`", "\\`").replace("\n", "\\n")
     )
     return (
         """apt-get update && apt-get install -y curl;"""  # Install the curl command
-        + f"""curl -X POST -H 'Content-type: application/json' --data '{message_json}' $SLACK_WEBHOOK ;"""
+        + f"""curl -X POST -H 'Content-type: application/json' --data "{message_json}" $SLACK_WEBHOOK ;"""
     )
 
 
