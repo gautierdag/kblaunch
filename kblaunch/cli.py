@@ -118,6 +118,20 @@ def delete_namespaced_job_safely(
             return False
 
 
+def read_startup_script(script_path: str) -> str:
+    """Read and validate startup script."""
+    try:
+        script_path = Path(script_path).resolve()
+        if not script_path.exists():
+            raise typer.BadParameter(f"Startup script not found: {script_path}")
+        if not script_path.is_file():
+            raise typer.BadParameter(f"Not a file: {script_path}")
+        logger.info(f"Using startup script: {script_path}")
+        return script_path.read_text()
+    except Exception as e:
+        raise typer.BadParameter(f"Error reading startup script: {e}")
+
+
 class KubernetesJob:
     def __init__(
         self,
@@ -139,6 +153,7 @@ class KubernetesJob:
         user_email: Optional[str] = None,
         namespace: Optional[str] = None,
         priority: str = "default",
+        startup_script: Optional[str] = None,
     ):
         # Validate gpu_limit first
         assert (
@@ -211,6 +226,25 @@ class KubernetesJob:
         }
         self.annotations = {"eidf/user": self.user_name, "eidf/email": self.user_email}
         self.namespace = namespace
+
+        self.startup_script = startup_script
+        if startup_script:
+            self.volume_mounts.append(
+                {
+                    "name": "startup-script",
+                    "mountPath": "/startup.sh",
+                    "subPath": "startup.sh",
+                }
+            )
+            self.volumes.append(
+                {
+                    "name": "startup-script",
+                    "configMap": {
+                        "name": f"{self.name}-startup",
+                        "defaultMode": 0o755,  # Make script executable
+                    },
+                }
+            )
 
     def _add_env_vars(self, container: dict):
         """Adds secret and normal environment variables to the
@@ -714,6 +748,9 @@ def launch(
     dry_run: bool = typer.Option(False, help="Dry run"),
     priority: str = typer.Option("default", help="Priority class name"),
     vscode: bool = typer.Option(False, help="Install VS Code CLI in the container"),
+    startup_script: str = typer.Option(
+        None, help="Path to startup script to run in container"
+    ),
 ):
     """Launch a Kubernetes job with the specified configuration."""
 
@@ -800,7 +837,37 @@ def launch(
     # Combine the environment variables
     union = set(secrets_env_vars_dict.keys()).union(env_vars_dict.keys())
 
+    # Handle startup script
+    script_content = None
+    if startup_script:
+        script_content = read_startup_script(startup_script)
+        # Create ConfigMap for startup script
+        try:
+            api = client.CoreV1Api()
+            config_map = client.V1ConfigMap(
+                metadata=client.V1ObjectMeta(
+                    name=f"{job_name}-startup", namespace=namespace
+                ),
+                data={"startup.sh": script_content},
+            )
+            try:
+                api.create_namespaced_config_map(namespace=namespace, body=config_map)
+            except ApiException as e:
+                if e.status == 409:  # Already exists
+                    api.patch_namespaced_config_map(
+                        name=f"{job_name}-startup", namespace=namespace, body=config_map
+                    )
+                else:
+                    raise
+        except Exception as e:
+            raise typer.BadParameter(f"Failed to create startup script ConfigMap: {e}")
+
     logger.info(f"Creating job for: {cmd}")
+
+    # Modify command to include startup script
+    if script_content:
+        cmd = f"bash /startup.sh && {cmd}"
+
     # Build the full command with optional VS Code installation
     full_cmd = ""
     if vscode:
@@ -825,6 +892,7 @@ def launch(
         nfs_server=nfs_server,
         pvc_name=pvc_name,
         priority=priority,
+        startup_script=script_content,
     )
     job_yaml = job.generate_yaml()
     logger.info(job_yaml)

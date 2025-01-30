@@ -1,10 +1,11 @@
 import json
 from unittest.mock import MagicMock, mock_open, patch
-from kubernetes.client.rest import ApiException  # Add this import
 
 import pytest
+import typer
 import yaml
 from kubernetes import client, config
+from kubernetes.client.rest import ApiException
 from loguru import logger
 from typer.testing import CliRunner
 
@@ -13,10 +14,11 @@ from kblaunch.cli import (
     app,
     check_if_completed,
     get_env_vars,
-    send_message_command,
-    load_config,
-    validate_gpu_constraints,
     is_mig_gpu,
+    load_config,
+    read_startup_script,
+    send_message_command,
+    validate_gpu_constraints,
 )
 
 
@@ -296,77 +298,83 @@ def test_kubernetes_job_generate_yaml(basic_job):
     )
 
 
-@patch('kubernetes.client.BatchV1Api')
+@patch("kubernetes.client.BatchV1Api")
 def test_kubernetes_job_run(mock_batch_api, mock_k8s_config, basic_job):
     """Test job run with mocked kubernetes API."""
     # Setup mock instance
     mock_api_instance = MagicMock()
     mock_batch_api.return_value = mock_api_instance
-    
+
     # Mock successful job creation
     mock_api_instance.create_namespaced_job.return_value = MagicMock()
-    
+
     # Run the job
     result = basic_job.run()
-    
+
     # Verify the job was created with correct parameters
     mock_api_instance.create_namespaced_job.assert_called_once()
     call_args = mock_api_instance.create_namespaced_job.call_args
-    
+
     # Verify namespace and job yaml
-    assert call_args[1]['namespace'] == 'default'  # or your expected namespace
-    job_dict = call_args[1]['body']
-    assert job_dict['kind'] == 'Job'
-    assert job_dict['metadata']['name'] == 'test-job'
-    
+    assert call_args[1]["namespace"] == "default"  # or your expected namespace
+    job_dict = call_args[1]["body"]
+    assert job_dict["kind"] == "Job"
+    assert job_dict["metadata"]["name"] == "test-job"
+
     # Verify return code
     assert result == 0
 
-@patch('kubernetes.client.BatchV1Api')
-def test_kubernetes_job_run_existing(mock_batch_api, mock_k8s_config, basic_job, monkeypatch):
+
+@patch("kubernetes.client.BatchV1Api")
+def test_kubernetes_job_run_existing(
+    mock_batch_api, mock_k8s_config, basic_job, monkeypatch
+):
     """Test job run when job already exists."""
     # Setup mock instance
     mock_api_instance = MagicMock()
     mock_batch_api.return_value = mock_api_instance
-    
+
     # Create a mock job with proper metadata and matching user
     mock_job = MagicMock()
     mock_metadata = MagicMock()
-    mock_metadata.labels = {"eidf/user": "test-user"}  # Match the user_name in basic_job
+    mock_metadata.labels = {
+        "eidf/user": "test-user"
+    }  # Match the user_name in basic_job
     mock_job.metadata = mock_metadata
     mock_api_instance.read_namespaced_job.return_value = mock_job
-    
+
     # Mock conflict on job creation
     conflict_exception = ApiException(status=409)
     mock_api_instance.create_namespaced_job.side_effect = [
         conflict_exception,  # First call fails with conflict
-        MagicMock()         # Second call succeeds after deletion
+        MagicMock(),  # Second call succeeds after deletion
     ]
-    
+
     # Mock user confirmation
-    monkeypatch.setattr('typer.confirm', lambda *args, **kwargs: True)
-    
+    monkeypatch.setattr("typer.confirm", lambda *args, **kwargs: True)
+
     # Run the job
     result = basic_job.run()
-    
+
     # Verify job deletion and recreation
     mock_api_instance.delete_namespaced_job.assert_called_once()
     assert mock_api_instance.create_namespaced_job.call_count == 2
     assert result == 0
 
-@patch('kubernetes.client.BatchV1Api')
+
+@patch("kubernetes.client.BatchV1Api")
 def test_kubernetes_job_run_error(mock_batch_api, mock_k8s_config, basic_job):
     """Test job run with API error."""
     # Setup mock instance
     mock_api_instance = MagicMock()
     mock_batch_api.return_value = mock_api_instance
-    
+
     # Mock API error
     mock_api_instance.create_namespaced_job.side_effect = ApiException(status=500)
-    
+
     # Run the job
     result = basic_job.run()
-    
+
     # Verify error handling
     assert result == 1
     mock_api_instance.create_namespaced_job.assert_called_once()
@@ -486,6 +494,163 @@ def test_is_mig_gpu():
     assert is_mig_gpu("NVIDIA-A100-SXM4-40GB-MIG-3g.20gb") is True
     assert is_mig_gpu("NVIDIA-A100-SXM4-40GB") is False
     assert is_mig_gpu("NVIDIA-H100-80GB-HBM3") is False
+
+
+def test_read_startup_script(tmp_path):
+    """Test reading startup script."""
+    # Create a temporary script file
+    script_path = tmp_path / "startup.sh"
+    script_content = "#!/bin/bash\necho 'Hello, World!'\n"
+    script_path.write_text(script_content)
+
+    # Test successful read
+    assert read_startup_script(str(script_path)) == script_content
+
+    # Test non-existent file
+    with pytest.raises(typer.BadParameter, match="not found"):
+        read_startup_script("nonexistent.sh")
+
+    # Test directory instead of file
+    dir_path = tmp_path / "test_dir"
+    dir_path.mkdir()
+    with pytest.raises(typer.BadParameter, match="Not a file"):
+        read_startup_script(str(dir_path))
+
+
+@patch("kblaunch.cli.KubernetesJob")
+def test_launch_with_startup_script(mock_kubernetes_job, mock_k8s_client, tmp_path):
+    """Test launch command with startup script."""
+    # Create a temporary script file
+    script_path = tmp_path / "startup.sh"
+    script_content = "#!/bin/bash\necho 'Hello, World!'\n"
+    script_path.write_text(script_content)
+
+    # Setup mock instances
+    mock_job_instance = mock_kubernetes_job.return_value
+    mock_job_instance.generate_yaml.return_value = "dummy: yaml"
+    mock_job_instance.run.return_value = None
+
+    # Mock job completion check
+    batch_api = mock_k8s_client["batch_api"]
+    batch_api.list_namespaced_job.return_value.items = []
+
+    # Mock ConfigMap creation
+    core_api = mock_k8s_client["core_api"]
+    core_api.create_namespaced_config_map.return_value = MagicMock()
+
+    # Run command with startup script
+    result = runner.invoke(
+        app,
+        [
+            "launch",
+            "--email",
+            "test@example.com",
+            "--job-name",
+            "test-job",
+            "--command",
+            "python test.py",
+            "--startup-script",
+            str(script_path),
+        ],
+    )
+
+    assert result.exit_code == 0
+    mock_kubernetes_job.assert_called_once()
+
+    # Verify ConfigMap was created
+    core_api.create_namespaced_config_map.assert_called_once()
+    config_map_call = core_api.create_namespaced_config_map.call_args
+    assert config_map_call[1]["body"].data["startup.sh"] == script_content
+
+    # Verify job parameters
+    job_args = mock_kubernetes_job.call_args[1]
+    assert job_args["startup_script"] == script_content
+    assert "bash /startup.sh &&" in job_args["args"][0]
+
+
+@patch("kblaunch.cli.KubernetesJob")
+def test_launch_with_startup_script_update(
+    mock_kubernetes_job, mock_k8s_client, tmp_path
+):
+    """Test launch command when ConfigMap already exists."""
+    # Create a temporary script file
+    script_path = tmp_path / "startup.sh"
+    script_content = "#!/bin/bash\necho 'Hello, World!'\n"
+    script_path.write_text(script_content)
+
+    # Setup mock instances
+    mock_job_instance = mock_kubernetes_job.return_value
+    mock_job_instance.generate_yaml.return_value = "dummy: yaml"
+    mock_job_instance.run.return_value = None
+
+    # Mock job completion check
+    batch_api = mock_k8s_client["batch_api"]
+    batch_api.list_namespaced_job.return_value.items = []
+
+    # Mock ConfigMap creation with conflict
+    core_api = mock_k8s_client["core_api"]
+    core_api.create_namespaced_config_map.side_effect = ApiException(status=409)
+
+    # Run command with startup script
+    result = runner.invoke(
+        app,
+        [
+            "launch",
+            "--email",
+            "test@example.com",
+            "--job-name",
+            "test-job",
+            "--command",
+            "python test.py",
+            "--startup-script",
+            str(script_path),
+        ],
+    )
+
+    assert result.exit_code == 0
+    mock_kubernetes_job.assert_called_once()
+
+    # Verify ConfigMap was updated
+    core_api.patch_namespaced_config_map.assert_called_once()
+    patch_call = core_api.patch_namespaced_config_map.call_args
+    assert patch_call[1]["body"].data["startup.sh"] == script_content
+
+
+def test_kubernetes_job_generate_yaml_with_startup_script(basic_job):
+    """Test KubernetesJob YAML generation with startup script."""
+    script_content = "#!/bin/bash\necho 'test'\n"
+
+    # Create a new job with startup script since basic_job doesn't have startup script setup
+    job_with_script = KubernetesJob(
+        name=basic_job.name,
+        image=basic_job.image,
+        kueue_queue_name=basic_job.kueue_queue_name,
+        gpu_limit=basic_job.gpu_limit,
+        gpu_type=basic_job.gpu_type,
+        gpu_product=basic_job.gpu_product,
+        user_email=basic_job.user_email,
+        user_name=basic_job.user_name,
+        startup_script=script_content,  # Add startup script
+    )
+
+    yaml_output = job_with_script.generate_yaml()
+    job_dict = yaml.safe_load(yaml_output)
+
+    # Verify startup script volume mount and config map are present
+    container = job_dict["spec"]["template"]["spec"]["containers"][0]
+    volumes = job_dict["spec"]["template"]["spec"]["volumes"]
+
+    startup_mount = next(
+        (m for m in container["volumeMounts"] if m["name"] == "startup-script"), None
+    )
+    assert startup_mount is not None
+    assert startup_mount["mountPath"] == "/startup.sh"
+    assert startup_mount["subPath"] == "startup.sh"
+
+    startup_volume = next((v for v in volumes if v["name"] == "startup-script"), None)
+    assert startup_volume is not None
+    assert startup_volume["configMap"]["defaultMode"] == 0o755
+    assert startup_volume["configMap"]["name"] == f"{job_with_script.name}-startup"
 
 
 runner = CliRunner()
