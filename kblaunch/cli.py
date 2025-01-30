@@ -190,6 +190,7 @@ def create_git_secret(
 def setup_git_command() -> str:
     """Generate command to setup Git with SSH key."""
     return (
+        """apt-get update && apt-get install -y git openssh-client && """
         """mkdir -p ~/.ssh && """
         """cp /etc/ssh-key/ssh-privatekey ~/.ssh/id_rsa && """
         """chmod 600 ~/.ssh/id_rsa && """
