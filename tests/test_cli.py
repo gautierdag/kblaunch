@@ -19,6 +19,8 @@ from kblaunch.cli import (
     read_startup_script,
     send_message_command,
     validate_gpu_constraints,
+    setup_git_command,
+    create_git_secret,
 )
 
 
@@ -442,6 +444,7 @@ def test_setup_command(mock_post, mock_check_pvc, mock_save):
         True,  # Would you like to set up Slack notifications?
         True,  # Would you like to set up a PVC?
         True,  # Would you like to set as default PVC?
+        True,  # Would you like to set up Git SSH authentication?
     ]
 
     prompt_responses = [
@@ -450,11 +453,14 @@ def test_setup_command(mock_post, mock_check_pvc, mock_save):
         "https://hooks.slack.com/test",  # slack webhook
         "user-pvc",  # PVC name
         "10Gi",  # PVC size
+        "/home/user/.ssh/id_rsa",  # SSH key path
     ]
 
     with patch("typer.confirm", side_effect=confirm_responses), patch(
         "typer.prompt", side_effect=prompt_responses
-    ), patch("kblaunch.cli.create_pvc", return_value=True):
+    ), patch("kblaunch.cli.create_pvc", return_value=True), patch(
+        "kblaunch.cli.create_git_secret", return_value=True
+    ):
         result = runner.invoke(app, ["setup"])
 
         assert result.exit_code == 0
@@ -465,6 +471,7 @@ def test_setup_command(mock_post, mock_check_pvc, mock_save):
                 "slack_webhook": "https://hooks.slack.com/test",
                 "pvc_name": "user-pvc",
                 "default_pvc": "user-pvc",
+                "git_secret": "user-git-ssh",  # Add git secret to expected config
             }
         )
 
@@ -651,6 +658,139 @@ def test_kubernetes_job_generate_yaml_with_startup_script(basic_job):
     assert startup_volume is not None
     assert startup_volume["configMap"]["defaultMode"] == 0o755
     assert startup_volume["configMap"]["name"] == f"{job_with_script.name}-startup"
+
+
+def test_setup_git_command():
+    """Test Git setup command generation."""
+    command = setup_git_command()
+
+    # Verify all required Git setup commands are present
+    assert "mkdir -p ~/.ssh" in command
+    assert "cp /etc/ssh-key/ssh-privatekey ~/.ssh/id_rsa" in command
+    assert "chmod 600 ~/.ssh/id_rsa" in command
+    assert "ssh-keyscan github.com" in command
+    assert "git config --global core.sshCommand" in command
+    assert "git config --global user.name" in command
+    assert "git config --global user.email" in command
+
+
+@patch("builtins.open", new_callable=mock_open, read_data="mock-ssh-key")
+def test_create_git_secret(mock_file, mock_k8s_client):
+    """Test creating Git SSH secret."""
+    core_api = mock_k8s_client["core_api"]
+    core_api.create_namespaced_secret.return_value = MagicMock()
+
+    result = create_git_secret(
+        secret_name="test-git-secret",
+        private_key_path="/fake/path/to/key",
+        namespace="test-namespace",
+    )
+
+    assert result is True
+    core_api.create_namespaced_secret.assert_called_once()
+
+    # Verify secret creation arguments
+    call_args = core_api.create_namespaced_secret.call_args
+    assert call_args[1]["namespace"] == "test-namespace"
+    secret = call_args[1]["body"]
+    assert secret.metadata.name == "test-git-secret"
+    assert secret.string_data["ssh-privatekey"] == "mock-ssh-key"
+    assert secret.type == "kubernetes.io/ssh-auth"
+
+
+@patch("builtins.open", new_callable=mock_open, read_data="mock-ssh-key")
+def test_create_git_secret_existing(mock_file, mock_k8s_client):
+    """Test updating existing Git SSH secret."""
+    core_api = mock_k8s_client["core_api"]
+
+    # Mock conflict on first attempt
+    core_api.create_namespaced_secret.side_effect = ApiException(status=409)
+    core_api.patch_namespaced_secret.return_value = MagicMock()
+
+    # Mock user confirmation
+    with patch("typer.confirm", return_value=True):
+        result = create_git_secret(
+            secret_name="test-git-secret",
+            private_key_path="/fake/path/to/key",
+            namespace="test-namespace",
+        )
+
+    assert result is True
+    core_api.patch_namespaced_secret.assert_called_once()
+
+
+def test_kubernetes_job_with_git(basic_job):
+    """Test KubernetesJob configuration with Git secret."""
+    job_with_git = KubernetesJob(
+        name=basic_job.name,
+        image=basic_job.image,
+        kueue_queue_name=basic_job.kueue_queue_name,
+        gpu_limit=basic_job.gpu_limit,
+        gpu_type=basic_job.gpu_type,
+        gpu_product=basic_job.gpu_product,
+        user_email=basic_job.user_email,
+        git_secret="test-git-secret",
+    )
+
+    yaml_output = job_with_git.generate_yaml()
+    job_dict = yaml.safe_load(yaml_output)
+
+    # Verify Git secret volume mount
+    container = job_dict["spec"]["template"]["spec"]["containers"][0]
+    volumes = job_dict["spec"]["template"]["spec"]["volumes"]
+
+    git_mount = next(
+        (m for m in container["volumeMounts"] if m["name"] == "git-ssh"), None
+    )
+    assert git_mount is not None
+    assert git_mount["mountPath"] == "/etc/ssh-key"
+    assert git_mount["readOnly"] is True
+
+    git_volume = next((v for v in volumes if v["name"] == "git-ssh"), None)
+    assert git_volume is not None
+    assert git_volume["secret"]["secretName"] == "test-git-secret"
+    assert git_volume["secret"]["defaultMode"] == 0o600
+
+
+@patch("kblaunch.cli.KubernetesJob")
+def test_launch_with_git_config(mock_kubernetes_job, mock_k8s_client):
+    """Test launch command with Git configuration."""
+    # Setup mock instance
+    mock_job_instance = mock_kubernetes_job.return_value
+    mock_job_instance.generate_yaml.return_value = "dummy: yaml"
+    mock_job_instance.run.return_value = None
+
+    # Mock job completion check
+    batch_api = mock_k8s_client["batch_api"]
+    batch_api.list_namespaced_job.return_value.items = []
+
+    # Create a mock config with Git secret
+    mock_config = {
+        "user": "test-user",
+        "email": "test@example.com",
+        "git_secret": "test-git-secret",
+    }
+
+    with patch("kblaunch.cli.load_config", return_value=mock_config):
+        result = runner.invoke(
+            app,
+            [
+                "launch",
+                "--job-name",
+                "test-job",
+                "--command",
+                "python test.py",
+            ],
+        )
+
+    assert result.exit_code == 0
+    mock_kubernetes_job.assert_called_once()
+
+    # Verify Git configuration was included
+    job_args = mock_kubernetes_job.call_args[1]
+    assert job_args["git_secret"] == "test-git-secret"
+    assert job_args["env_vars"]["USER"] == "test-user"
+    assert job_args["env_vars"]["GIT_EMAIL"] == "test@example.com"
 
 
 runner = CliRunner()

@@ -132,6 +132,74 @@ def read_startup_script(script_path: str) -> str:
         raise typer.BadParameter(f"Error reading startup script: {e}")
 
 
+def create_git_secret(
+    secret_name: str,
+    private_key_path: str,
+    namespace: str = "informatics",
+) -> bool:
+    """
+    Create a Kubernetes secret containing SSH private key for Git authentication.
+
+    Args:
+        secret_name: Name of the secret
+        private_key_path: Path to SSH private key file
+        namespace: Kubernetes namespace
+
+    Returns:
+        bool: True if successful, False otherwise
+    """
+    try:
+        with open(private_key_path, "r") as f:
+            private_key = f.read()
+
+        # Load the kube config
+        config.load_kube_config()
+        api = client.CoreV1Api()
+
+        # Create the secret
+        secret = client.V1Secret(
+            metadata=client.V1ObjectMeta(name=secret_name),
+            string_data={"ssh-privatekey": private_key},
+            type="kubernetes.io/ssh-auth",
+        )
+
+        try:
+            api.create_namespaced_secret(namespace=namespace, body=secret)
+            logger.info(f"Secret '{secret_name}' created successfully")
+            return True
+        except ApiException as e:
+            if e.status == 409:  # Secret already exists
+                if typer.confirm(
+                    f"Secret '{secret_name}' already exists. Replace it?",
+                    default=False,
+                ):
+                    api.patch_namespaced_secret(
+                        name=secret_name, namespace=namespace, body=secret
+                    )
+                    logger.info(f"Secret '{secret_name}' updated successfully")
+                    return True
+            else:
+                logger.error(f"Error creating secret: {e}")
+            return False
+
+    except Exception as e:
+        logger.error(f"Error creating Git secret: {e}")
+        return False
+
+
+def setup_git_command() -> str:
+    """Generate command to setup Git with SSH key."""
+    return (
+        """mkdir -p ~/.ssh && """
+        """cp /etc/ssh-key/ssh-privatekey ~/.ssh/id_rsa && """
+        """chmod 600 ~/.ssh/id_rsa && """
+        """ssh-keyscan github.com >> ~/.ssh/known_hosts && """
+        """git config --global core.sshCommand 'ssh -i ~/.ssh/id_rsa' && """
+        """git config --global user.name "${USER}" && """
+        """git config --global user.email "${GIT_EMAIL}" && """
+    )
+
+
 class KubernetesJob:
     def __init__(
         self,
@@ -154,6 +222,7 @@ class KubernetesJob:
         namespace: Optional[str] = None,
         priority: str = "default",
         startup_script: Optional[str] = None,
+        git_secret: Optional[str] = None,
     ):
         # Validate gpu_limit first
         assert (
@@ -242,6 +311,25 @@ class KubernetesJob:
                     "configMap": {
                         "name": f"{self.name}-startup",
                         "defaultMode": 0o755,  # Make script executable
+                    },
+                }
+            )
+
+        self.git_secret = git_secret
+        if git_secret:
+            self.volume_mounts.append(
+                {
+                    "name": "git-ssh",
+                    "mountPath": "/etc/ssh-key",
+                    "readOnly": True,
+                }
+            )
+            self.volumes.append(
+                {
+                    "name": "git-ssh",
+                    "secret": {
+                        "secretName": git_secret,
+                        "defaultMode": 0o600,
                     },
                 }
             )
@@ -691,6 +779,17 @@ def setup():
         if use_default:
             config["default_pvc"] = pvc_name
 
+    # Git authentication setup
+    if typer.confirm("Would you like to set up Git SSH authentication?", default=False):
+        default_key_path = str(Path.home() / ".ssh" / "id_rsa")
+        key_path = typer.prompt(
+            "Enter the path to your SSH private key",
+            default=default_key_path,
+        )
+        secret_name = f"{config['user']}-git-ssh"
+        if create_git_secret(secret_name, key_path):
+            config["git_secret"] = secret_name
+
     # validate slack webhook
     if "slack_webhook" in config:
         # test post to slack
@@ -823,6 +922,12 @@ def launch(
         local_env_vars=local_env_vars,
         load_dotenv=load_dotenv,
     )
+
+    # Add USER and GIT_EMAIL to env_vars if git_secret is configured
+    if config.get("git_secret"):
+        env_vars_dict["USER"] = config.get("user", os.getenv("USER", "unknown"))
+        env_vars_dict["GIT_EMAIL"] = email
+
     secrets_env_vars_dict = get_secret_env_vars(
         secrets_names=secrets_env_vars,
         namespace=namespace,
@@ -870,6 +975,8 @@ def launch(
 
     # Build the full command with optional VS Code installation
     full_cmd = ""
+    if config.get("git_secret"):
+        full_cmd += setup_git_command()
     if vscode:
         full_cmd += install_vscode_command()
     full_cmd += send_message_command(union) + cmd
@@ -893,6 +1000,7 @@ def launch(
         pvc_name=pvc_name,
         priority=priority,
         startup_script=script_content,
+        git_secret=config.get("git_secret"),
     )
     job_yaml = job.generate_yaml()
     logger.info(job_yaml)
