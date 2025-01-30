@@ -1,5 +1,4 @@
 import os
-import subprocess
 from typing import List, Optional
 import json
 from pathlib import Path
@@ -9,6 +8,8 @@ import yaml
 from kubernetes import client, config
 from loguru import logger
 from enum import Enum
+import re
+from kubernetes.client.rest import ApiException
 
 MAX_CPU = 192
 MAX_RAM = 890
@@ -277,44 +278,56 @@ class KubernetesJob:
         return yaml.dump(job)
 
     def run(self):
+        """Create or update the job using the Kubernetes API."""
         config.load_kube_config()
+        api = client.BatchV1Api()
 
-        job_yaml = self.generate_yaml()
+        # Convert YAML to dict
+        job_dict = yaml.safe_load(self.generate_yaml())
 
-        # Save the generated YAML to a temporary file
-        with open("temp_job.yaml", "w") as temp_file:
-            temp_file.write(job_yaml)
-
-        # Run the kubectl command with --validate=False
-        cmd = ["kubectl", "apply", "-f", "temp_job.yaml"]
+        # log the job yaml
+        logger.info(yaml.dump(job_dict))
 
         try:
-            result = subprocess.run(
-                cmd,
-                check=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
+            # Try to create the job
+            api.create_namespaced_job(
+                namespace=self.namespace or "default", body=job_dict
             )
-            # Remove the temporary file
-            os.remove("temp_job.yaml")
-            return result.returncode
-        except subprocess.CalledProcessError as e:
-            logger.info(
-                f"Command '{' '.join(cmd)}' failed with return code {e.returncode}."
-            )
-            logger.info(f"Stdout:\n{e.stdout}")
-            logger.info(f"Stderr:\n{e.stderr}")
-            # Remove the temporary file
-            os.remove("temp_job.yaml")
-            return e.returncode  # return the exit code
-        except Exception:
-            logger.exception(
-                f"An unexpected error occurred while running '{' '.join(cmd)}'."
-            )  # This logs the traceback too
-            # Remove the temporary file
-            os.remove("temp_job.yaml")
-            return 1  # return the exit code
+            logger.info(f"Job '{self.name}' created successfully")
+            return 0
+        except ApiException as e:
+            if e.status == 409:  # Conflict - job already exists
+                if not typer.confirm(
+                    f"Job '{self.name}' already exists. Do you want to delete it and create a new one?",
+                    default=False,
+                ):
+                    logger.info("Operation cancelled by user")
+                    return 1
+
+                try:
+                    # Delete existing job
+                    api.delete_namespaced_job(
+                        name=self.name,
+                        namespace=self.namespace or "default",
+                        body=client.V1DeleteOptions(propagation_policy="Foreground"),
+                    )
+                    logger.info(f"Existing job '{self.name}' deleted")
+
+                    # Create new job
+                    api.create_namespaced_job(
+                        namespace=self.namespace or "default", body=job_dict
+                    )
+                    logger.info(f"Job '{self.name}' recreated successfully")
+                    return 0
+                except ApiException as e:
+                    logger.error(f"Failed to recreate job: {e}")
+                    return 1
+            else:
+                logger.error(f"Failed to create job: {e}")
+                return 1
+        except Exception as e:
+            logger.exception(f"Unexpected error creating job: {e}")
+            return 1
 
 
 def check_if_completed(job_name: str, namespace: str = "informatics") -> bool:
@@ -363,9 +376,11 @@ def send_message_command(env_vars: set) -> str:
     if "SLACK_WEBHOOK" not in env_vars:
         logger.debug("SLACK_WEBHOOK not found in env_vars.")
         return ""
+
+    message = "Job started in $POD_NAME. To connect to the pod, run ```\nkubectl exec -it $POD_NAME -- /bin/bash'\n```."
     return (
         """apt-get update && apt-get install -y curl;"""  # Install the curl command
-        + """curl -X POST -H 'Content-type: application/json' --data '{"text":"Job started in '"$POD_NAME"'"}' $SLACK_WEBHOOK ;"""
+        + f"""curl -X POST -H 'Content-type: application/json' --data '{{"text":"{message}"}}' $SLACK_WEBHOOK ;"""
     )
 
 
@@ -424,6 +439,114 @@ def get_secret_env_vars(
     return secrets_env_vars
 
 
+def check_if_pvc_exists(pvc_name: str, namespace: str = "informatics") -> bool:
+    """
+    Check if a Persistent Volume Claim (PVC) exists in the specified namespace.
+    """
+    # Load the kube config
+    config.load_kube_config()
+    # Create an instance of the API class
+    api = client.CoreV1Api()
+    pvc_exists = False
+    # Check if the PVC exists in the specified namespace
+    pvcs = api.list_namespaced_persistent_volume_claim(namespace)
+    if pvc_name in {pvc.metadata.name for pvc in pvcs.items}:
+        pvc_exists = True
+    return pvc_exists
+
+
+def validate_storage(storage: str) -> bool:
+    """
+    Validate storage string format (e.g., 10Gi, 100Mi, 1Ti).
+
+    Args:
+        storage: String representing storage size (e.g., "10Gi")
+
+    Returns:
+        bool: True if valid, raises ValueError if invalid
+    """
+    pattern = r"^([0-9]+)(Mi|Gi|Ti)$"
+    match = re.match(pattern, storage)
+
+    if not match:
+        raise ValueError(
+            "Invalid storage format. Must be a number followed by Mi, Gi, or Ti (e.g., 10Gi)"
+        )
+
+    size = int(match.group(1))
+    unit = match.group(2)
+
+    # Add some reasonable limits
+    max_sizes = {
+        "Mi": 1024 * 1024,  # 1 TiB in MiB
+        "Gi": 1024,  # 1 TiB in GiB
+        "Ti": 1,  # 1 TiB
+    }
+
+    if size <= 0 or size > max_sizes[unit]:
+        raise ValueError(f"Storage size must be between 1 and {max_sizes[unit]}{unit}")
+
+    return True
+
+
+def create_pvc(
+    user: str,
+    pvc_name: str,
+    storage: str,
+    namespace: str = "informatics",
+    storage_class: str = "csi-rbd-sc",
+) -> bool:
+    """
+    Create a Persistent Volume Claim.
+
+    Args:
+        user: Username for labeling
+        pvc_name: Name of the PVC
+        storage: Storage size (e.g., "10Gi")
+        namespace: Kubernetes namespace
+        storage_class: Storage class name
+
+    Returns:
+        bool: True if successful, False otherwise
+    """
+    # Validate storage format
+    validate_storage(storage)
+
+    # Load the kube config
+    config.load_kube_config()
+
+    # Create an instance of the API class
+    api = client.CoreV1Api()
+
+    # Define the PVC
+    pvc = client.V1PersistentVolumeClaim(
+        metadata=client.V1ObjectMeta(
+            name=pvc_name, namespace=namespace, labels={"eidf/user": user}
+        ),
+        spec=client.V1PersistentVolumeClaimSpec(
+            access_modes=["ReadWriteOnce"],
+            resources=client.V1ResourceRequirements(requests={"storage": storage}),
+            storage_class_name=storage_class,
+        ),
+    )
+    try:
+        # Create the PVC
+        api.create_namespaced_persistent_volume_claim(namespace=namespace, body=pvc)
+        logger.info(f"PVC '{pvc_name}' created successfully")
+        return True
+
+    except ApiException as e:
+        if e.status == 409:  # Conflict - PVC already exists
+            logger.warning(f"PVC '{pvc_name}' already exists")
+            return False
+        else:
+            logger.error(f"Error creating PVC: {e}")
+            raise
+    except Exception as e:
+        logger.error(f"Unexpected error creating PVC: {e}")
+        raise
+
+
 @app.command()
 def setup():
     """Interactive setup for kblaunch configuration."""
@@ -448,6 +571,34 @@ def setup():
     if typer.confirm("Would you like to set up Slack notifications?", default=False):
         webhook = typer.prompt("Enter your Slack webhook URL")
         config["slack_webhook"] = webhook
+
+    if typer.confirm("Would you like to set up a PVC?", default=False):
+        user = config["user"]
+        pvc_name = typer.prompt("Enter the desired PVC name", default=f"{user}-pvc")
+
+        # Check if PVC exists
+        if check_if_pvc_exists(pvc_name):
+            logger.warning(f"PVC '{pvc_name}' already exists")
+        else:
+            pvc_size = typer.prompt(
+                "Enter the desired PVC size (e.g. 10Gi)", default="10Gi"
+            )
+            try:
+                if create_pvc(user, pvc_name, pvc_size):
+                    logger.info(f"PVC '{pvc_name}' created successfully")
+                    config["pvc_name"] = pvc_name
+            except (ValueError, ApiException) as e:
+                logger.error(f"Failed to create PVC: {e}")
+
+        current_default = config.get("default_pvc", None)
+        use_default = typer.confirm(
+            f"Would you like set {pvc_name} as the default PVC? "
+            f"Note that only one pod can use the PVC at a time. "
+            f"The current default is {current_default}",
+            default=True,
+        )
+        if use_default:
+            config["default_pvc"] = pvc_name
 
     # validate slack webhook
     if "slack_webhook" in config:
@@ -531,6 +682,14 @@ def launch(
 
     if "user" in config and os.getenv("USER") is None:
         os.environ["USER"] = config["user"]
+
+    if pvc_name is None:
+        pvc_name = config.get("default_pvc")
+
+    if pvc_name is not None:
+        if not check_if_pvc_exists(pvc_name):
+            logger.error(f"Provided PVC '{pvc_name}' does not exist")
+            return
 
     # Add validation for command parameter
     if not interactive and command == "":

@@ -1,5 +1,6 @@
 import json
 from unittest.mock import MagicMock, mock_open, patch
+from kubernetes.client.rest import ApiException  # Add this import
 
 import pytest
 import yaml
@@ -262,13 +263,6 @@ def mock_k8s_config():
 
 
 @pytest.fixture
-def mock_subprocess():
-    with patch("subprocess.run") as mock_run:
-        mock_run.return_value.returncode = 0
-        yield mock_run
-
-
-@pytest.fixture
 def basic_job():
     return KubernetesJob(
         name="test-job",
@@ -301,16 +295,73 @@ def test_kubernetes_job_generate_yaml(basic_job):
     )
 
 
-def test_kubernetes_job_run(mock_k8s_config, mock_subprocess, basic_job):
-    with patch("builtins.open", mock_open()) as mock_file, patch(
-        "os.remove"
-    ) as mock_remove:
-        result = basic_job.run()
-
+@patch('kubernetes.client.BatchV1Api')
+def test_kubernetes_job_run(mock_batch_api, mock_k8s_config, basic_job):
+    """Test job run with mocked kubernetes API."""
+    # Setup mock instance
+    mock_api_instance = MagicMock()
+    mock_batch_api.return_value = mock_api_instance
+    
+    # Mock successful job creation
+    mock_api_instance.create_namespaced_job.return_value = MagicMock()
+    
+    # Run the job
+    result = basic_job.run()
+    
+    # Verify the job was created with correct parameters
+    mock_api_instance.create_namespaced_job.assert_called_once()
+    call_args = mock_api_instance.create_namespaced_job.call_args
+    
+    # Verify namespace and job yaml
+    assert call_args[1]['namespace'] == 'default'  # or your expected namespace
+    job_dict = call_args[1]['body']
+    assert job_dict['kind'] == 'Job'
+    assert job_dict['metadata']['name'] == 'test-job'
+    
+    # Verify return code
     assert result == 0
-    mock_subprocess.assert_called_once()
-    mock_file().write.assert_called_once()
-    mock_remove.assert_called_once_with("temp_job.yaml")
+
+@patch('kubernetes.client.BatchV1Api')
+def test_kubernetes_job_run_existing(mock_batch_api, mock_k8s_config, basic_job, monkeypatch):
+    """Test job run when job already exists."""
+    # Setup mock instance
+    mock_api_instance = MagicMock()
+    mock_batch_api.return_value = mock_api_instance
+    
+    # Mock conflict on job creation
+    conflict_exception = ApiException(status=409)
+    mock_api_instance.create_namespaced_job.side_effect = [
+        conflict_exception,  # First call fails with conflict
+        MagicMock()         # Second call succeeds after deletion
+    ]
+    
+    # Mock user confirmation
+    monkeypatch.setattr('typer.confirm', lambda *args, **kwargs: True)
+    
+    # Run the job
+    result = basic_job.run()
+    
+    # Verify job deletion and recreation
+    mock_api_instance.delete_namespaced_job.assert_called_once()
+    assert mock_api_instance.create_namespaced_job.call_count == 2
+    assert result == 0
+
+@patch('kubernetes.client.BatchV1Api')
+def test_kubernetes_job_run_error(mock_batch_api, mock_k8s_config, basic_job):
+    """Test job run with API error."""
+    # Setup mock instance
+    mock_api_instance = MagicMock()
+    mock_batch_api.return_value = mock_api_instance
+    
+    # Mock API error
+    mock_api_instance.create_namespaced_job.side_effect = ApiException(status=500)
+    
+    # Run the job
+    result = basic_job.run()
+    
+    # Verify error handling
+    assert result == 1
+    mock_api_instance.create_namespaced_job.assert_called_once()
 
 
 @pytest.mark.parametrize("gpu_limit", [-1, 0, 9])
@@ -360,19 +411,44 @@ def test_load_config_with_file():
             assert config == test_config
 
 
-def test_setup_command():
+@patch("kblaunch.cli.save_config")
+@patch("kblaunch.cli.check_if_pvc_exists")
+@patch("requests.post")
+def test_setup_command(mock_post, mock_check_pvc, mock_save):
     """Test setup command with mock inputs."""
-    with patch("typer.confirm", side_effect=[True, True, True]), patch(
-        "typer.prompt",
-        side_effect=["user", "test@example.com", "https://hooks.slack.com/test"],
-    ), patch("kblaunch.cli.save_config") as mock_save:
+    # Setup mocks
+    mock_post.return_value.status_code = 200
+    mock_check_pvc.return_value = False
+
+    # Mock all the user interactions
+    confirm_responses = [
+        True,  # Would you like to set the user?
+        True,  # Would you like to set up Slack notifications?
+        True,  # Would you like to set up a PVC?
+        True,  # Would you like to set as default PVC?
+    ]
+
+    prompt_responses = [
+        "user",  # user input
+        "test@example.com",  # email input
+        "https://hooks.slack.com/test",  # slack webhook
+        "user-pvc",  # PVC name
+        "10Gi",  # PVC size
+    ]
+
+    with patch("typer.confirm", side_effect=confirm_responses), patch(
+        "typer.prompt", side_effect=prompt_responses
+    ), patch("kblaunch.cli.create_pvc", return_value=True):
         result = runner.invoke(app, ["setup"])
+
         assert result.exit_code == 0
         mock_save.assert_called_once_with(
             {
                 "user": "user",
                 "email": "test@example.com",
                 "slack_webhook": "https://hooks.slack.com/test",
+                "pvc_name": "user-pvc",
+                "default_pvc": "user-pvc",
             }
         )
 
