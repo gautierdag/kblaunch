@@ -608,18 +608,28 @@ def setup():
 
     # Get email
     existing_email = config.get("email", None)
-    email = typer.prompt("Please enter your email", default=existing_email)
+    email = typer.prompt(
+        f"Please enter your email (existing: {existing_email})", default=existing_email
+    )
     config["email"] = email
 
     # Get Slack webhook
     if typer.confirm("Would you like to set up Slack notifications?", default=False):
         existing_webhook = config.get("slack_webhook", None)
-        webhook = typer.prompt("Enter your Slack webhook URL", default=existing_webhook)
+        webhook = typer.prompt(
+            f"Enter your Slack webhook URL (existing: {existing_webhook})",
+            default=existing_webhook,
+        )
         config["slack_webhook"] = webhook
 
-    if typer.confirm("Would you like to set up a PVC?", default=False):
+    if typer.confirm("Would you like to create a PVC?", default=False):
         user = config["user"]
-        pvc_name = typer.prompt("Enter the desired PVC name", default=f"{user}-pvc")
+        current_default = config.get("default_pvc", f"{user}-pvc")
+
+        pvc_name = typer.prompt(
+            f"Enter the desired PVC name (default: {current_default})",
+            default=current_default,
+        )
 
         # Check if PVC exists
         if check_if_pvc_exists(pvc_name):
@@ -634,7 +644,6 @@ def setup():
             except (ValueError, ApiException) as e:
                 logger.error(f"Failed to create PVC: {e}")
 
-        current_default = config.get("default_pvc", None)
         use_default = typer.confirm(
             f"Would you like set {pvc_name} as the default PVC? "
             f"Note that only one pod can use the PVC at a time. "
