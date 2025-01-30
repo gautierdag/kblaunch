@@ -5,6 +5,7 @@ from enum import Enum
 from pathlib import Path
 from typing import List, Optional
 
+import requests
 import typer
 import yaml
 from kubernetes import client, config
@@ -415,10 +416,14 @@ def send_message_command(env_vars: set) -> str:
         logger.debug("SLACK_WEBHOOK not found in env_vars.")
         return ""
 
-    message = "Job started in $POD_NAME. To connect to the pod, run ```\nkubectl exec -it $POD_NAME -- /bin/bash'\n```."
+    message_json = json.dumps(
+        {
+            "text": "Job started in $POD_NAME. To connect to the pod, run ```kubectl exec -it $POD_NAME -- /bin/bash```."
+        }
+    )
     return (
         """apt-get update && apt-get install -y curl;"""  # Install the curl command
-        + f"""curl -X POST -H 'Content-type: application/json' --data '{{"text":"{message}"}}' $SLACK_WEBHOOK ;"""
+        + f"""curl -X POST -H 'Content-type: application/json' --data '{message_json}' $SLACK_WEBHOOK ;"""
     )
 
 
@@ -602,12 +607,14 @@ def setup():
         config["user"] = user
 
     # Get email
-    email = typer.prompt("Please enter your email")
+    existing_email = config.get("email", None)
+    email = typer.prompt("Please enter your email", default=existing_email)
     config["email"] = email
 
     # Get Slack webhook
     if typer.confirm("Would you like to set up Slack notifications?", default=False):
-        webhook = typer.prompt("Enter your Slack webhook URL")
+        existing_webhook = config.get("slack_webhook", None)
+        webhook = typer.prompt("Enter your Slack webhook URL", default=existing_webhook)
         config["slack_webhook"] = webhook
 
     if typer.confirm("Would you like to set up a PVC?", default=False):
@@ -642,9 +649,7 @@ def setup():
         # test post to slack
         try:
             logger.info("Sending test message to Slack")
-            import requests
-
-            message = "Hello :wave: from kblaunch"
+            message = "Hello :wave: from ```kblaunch```"
             response = requests.post(
                 config["slack_webhook"],
                 json={"text": message},
