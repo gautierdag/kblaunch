@@ -1,15 +1,15 @@
-import os
-from typing import List, Optional
 import json
+import os
+import re
+from enum import Enum
 from pathlib import Path
+from typing import List, Optional
 
 import typer
 import yaml
 from kubernetes import client, config
-from loguru import logger
-from enum import Enum
-import re
 from kubernetes.client.rest import ApiException
+from loguru import logger
 
 MAX_CPU = 192
 MAX_RAM = 890
@@ -68,6 +68,53 @@ def validate_gpu_constraints(gpu_product: str, gpu_limit: int, priority: str):
         raise ValueError(
             "Cannot request H100 GPUs in the short-workload-high-priority class"
         )
+
+
+def delete_namespaced_job_safely(
+    job_name: str,
+    namespace: str = "informatics",
+    user: Optional[str] = None,
+) -> bool:
+    """
+    Delete a namespaced job if it exists and the user owns it.
+
+    Args:
+        job_name: Name of the job to delete
+        namespace: Kubernetes namespace
+        user: Username to verify ownership (if None, no ownership check)
+
+    Returns:
+        bool: True if job was deleted, False otherwise
+    """
+    try:
+        api = client.BatchV1Api()
+        job = api.read_namespaced_job(name=job_name, namespace=namespace)
+
+        # Check ownership if user is provided
+        if user is not None:
+            job_user = job.metadata.labels.get("eidf/user")
+            if job_user != user:
+                logger.error(
+                    f"Job '{job_name}' belongs to user '{job_user}', not '{user}'"
+                )
+                return False
+
+        # Delete the job
+        api.delete_namespaced_job(
+            name=job_name,
+            namespace=namespace,
+            body=client.V1DeleteOptions(propagation_policy="Foreground"),
+        )
+        logger.info(f"Job '{job_name}' deleted successfully")
+        return True
+
+    except ApiException as e:
+        if e.status == 404:
+            logger.warning(f"Job '{job_name}' not found")
+            return False
+        else:
+            logger.error(f"Error deleting job: {e}")
+            return False
 
 
 class KubernetesJob:
@@ -304,24 +351,20 @@ class KubernetesJob:
                     logger.info("Operation cancelled by user")
                     return 1
 
-                try:
-                    # Delete existing job
-                    api.delete_namespaced_job(
-                        name=self.name,
-                        namespace=self.namespace or "default",
-                        body=client.V1DeleteOptions(propagation_policy="Foreground"),
-                    )
-                    logger.info(f"Existing job '{self.name}' deleted")
-
-                    # Create new job
-                    api.create_namespaced_job(
-                        namespace=self.namespace or "default", body=job_dict
-                    )
-                    logger.info(f"Job '{self.name}' recreated successfully")
-                    return 0
-                except ApiException as e:
-                    logger.error(f"Failed to recreate job: {e}")
-                    return 1
+                # Try to delete and recreate
+                if delete_namespaced_job_safely(
+                    self.name, self.namespace or "default", self.user_name
+                ):
+                    try:
+                        api.create_namespaced_job(
+                            namespace=self.namespace or "default", body=job_dict
+                        )
+                        logger.info(f"Job '{self.name}' recreated successfully")
+                        return 0
+                    except ApiException as e:
+                        logger.error(f"Failed to recreate job: {e}")
+                        return 1
+                return 1
             else:
                 logger.error(f"Failed to create job: {e}")
                 return 1
@@ -360,12 +403,7 @@ def check_if_completed(job_name: str, namespace: str = "informatics") -> bool:
             logger.info(f"Job {job_name} still running or status is unknown.")
 
         if is_completed:
-            api_res = api.delete_namespaced_job(
-                name=job_name,
-                namespace=namespace,
-                body=client.V1DeleteOptions(propagation_policy="Foreground"),
-            )
-            logger.info(f"Job '{job_name}' deleted. Status: {api_res.status}")
+            delete_namespaced_job_safely(job_name, namespace)
     return is_completed
 
 
@@ -585,7 +623,6 @@ def setup():
             )
             try:
                 if create_pvc(user, pvc_name, pvc_size):
-                    logger.info(f"PVC '{pvc_name}' created successfully")
                     config["pvc_name"] = pvc_name
             except (ValueError, ApiException) as e:
                 logger.error(f"Failed to create PVC: {e}")
@@ -695,77 +732,87 @@ def launch(
     if not interactive and command == "":
         raise typer.BadParameter("--command is required when not in interactive mode")
 
+    # Validate GPU constraints before creating job
+    try:
+        validate_gpu_constraints(gpu_product.value, gpu_limit, priority)
+    except ValueError as e:
+        raise typer.BadParameter(str(e))
+
     is_completed = check_if_completed(job_name, namespace=namespace)
-
-    if is_completed is True:
-        logger.info(f"Job '{job_name}' is completed. Launching a new job.")
-
-        # Validate GPU constraints before creating job
-        try:
-            validate_gpu_constraints(gpu_product.value, gpu_limit, priority)
-        except ValueError as e:
-            raise typer.BadParameter(str(e))
-
-        if interactive:
-            cmd = "while true; do sleep 60; done;"
+    if not is_completed:
+        if typer.confirm(
+            f"Job '{job_name}' already exists. Do you want to delete it and create a new one?",
+            default=False,
+        ):
+            if not delete_namespaced_job_safely(
+                job_name,
+                namespace=namespace,
+                user=config.get("user"),
+            ):
+                logger.error("Failed to delete existing job")
+                return 1
         else:
-            cmd = command
-            logger.info(f"Command: {cmd}")
+            logger.info("Operation cancelled by user")
+            return 1
 
-        # Get local environment variables
-        env_vars_dict = get_env_vars(
-            local_env_vars=local_env_vars,
-            load_dotenv=load_dotenv,
-        )
-        secrets_env_vars_dict = get_secret_env_vars(
-            secrets_names=secrets_env_vars,
-            namespace=namespace,
-        )
+    logger.info(f"Job '{job_name}' is completed. Launching a new job.")
 
-        # Check for overlapping keys in local and secret environment variables
-        intersection = set(secrets_env_vars_dict.keys()).intersection(
-            env_vars_dict.keys()
-        )
-        if intersection:
-            logger.warning(
-                f"Overlapping keys in local and secret environment variables: {intersection}"
-            )
-        # Combine the environment variables
-        union = set(secrets_env_vars_dict.keys()).union(env_vars_dict.keys())
-
-        logger.info(f"Creating job for: {cmd}")
-        # Build the full command with optional VS Code installation
-        full_cmd = ""
-        if vscode:
-            full_cmd += install_vscode_command()
-        full_cmd += send_message_command(union) + cmd
-
-        job = KubernetesJob(
-            name=job_name,
-            cpu_request=cpu_request,
-            ram_request=ram_request,
-            image=docker_image,
-            gpu_type="nvidia.com/gpu",
-            gpu_limit=gpu_limit,
-            gpu_product=gpu_product.value,
-            command=["/bin/bash", "-c", "--"],
-            args=[full_cmd],
-            env_vars=env_vars_dict,
-            secret_env_vars=secrets_env_vars_dict,
-            user_email=email,
-            namespace=namespace,
-            kueue_queue_name=queue_name,
-            nfs_server=nfs_server,
-            pvc_name=pvc_name,
-            priority=priority,
-        )
-        job_yaml = job.generate_yaml()
-        logger.info(job_yaml)
-        # Run the Job on the Kubernetes cluster
-        if not dry_run:
-            job.run()
+    if interactive:
+        cmd = "while true; do sleep 60; done;"
     else:
-        logger.info(f"Job '{job_name}' is still running.")
+        cmd = command
+        logger.info(f"Command: {cmd}")
+
+    # Get local environment variables
+    env_vars_dict = get_env_vars(
+        local_env_vars=local_env_vars,
+        load_dotenv=load_dotenv,
+    )
+    secrets_env_vars_dict = get_secret_env_vars(
+        secrets_names=secrets_env_vars,
+        namespace=namespace,
+    )
+
+    # Check for overlapping keys in local and secret environment variables
+    intersection = set(secrets_env_vars_dict.keys()).intersection(env_vars_dict.keys())
+    if intersection:
+        logger.warning(
+            f"Overlapping keys in local and secret environment variables: {intersection}"
+        )
+    # Combine the environment variables
+    union = set(secrets_env_vars_dict.keys()).union(env_vars_dict.keys())
+
+    logger.info(f"Creating job for: {cmd}")
+    # Build the full command with optional VS Code installation
+    full_cmd = ""
+    if vscode:
+        full_cmd += install_vscode_command()
+    full_cmd += send_message_command(union) + cmd
+
+    job = KubernetesJob(
+        name=job_name,
+        cpu_request=cpu_request,
+        ram_request=ram_request,
+        image=docker_image,
+        gpu_type="nvidia.com/gpu",
+        gpu_limit=gpu_limit,
+        gpu_product=gpu_product.value,
+        command=["/bin/bash", "-c", "--"],
+        args=[full_cmd],
+        env_vars=env_vars_dict,
+        secret_env_vars=secrets_env_vars_dict,
+        user_email=email,
+        namespace=namespace,
+        kueue_queue_name=queue_name,
+        nfs_server=nfs_server,
+        pvc_name=pvc_name,
+        priority=priority,
+    )
+    job_yaml = job.generate_yaml()
+    logger.info(job_yaml)
+    # Run the Job on the Kubernetes cluster
+    if not dry_run:
+        job.run()
 
 
 def cli():

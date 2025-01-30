@@ -272,6 +272,7 @@ def basic_job():
         gpu_type="nvidia.com/gpu",
         gpu_product="NVIDIA-A100-SXM4-40GB",
         user_email="test@example.com",
+        user_name="test-user",  # Add explicit user name
     )
 
 
@@ -327,6 +328,13 @@ def test_kubernetes_job_run_existing(mock_batch_api, mock_k8s_config, basic_job,
     # Setup mock instance
     mock_api_instance = MagicMock()
     mock_batch_api.return_value = mock_api_instance
+    
+    # Create a mock job with proper metadata and matching user
+    mock_job = MagicMock()
+    mock_metadata = MagicMock()
+    mock_metadata.labels = {"eidf/user": "test-user"}  # Match the user_name in basic_job
+    mock_job.metadata = mock_metadata
+    mock_api_instance.read_namespaced_job.return_value = mock_job
     
     # Mock conflict on job creation
     conflict_exception = ApiException(status=409)
