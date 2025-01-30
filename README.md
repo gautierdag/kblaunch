@@ -35,6 +35,14 @@ Run the setup command to configure the tool (email and slack webhook):
 kblaunch setup
 ```
 
+This will go through the following steps:
+
+1. Set the user (optional): This is used to identify the user and required by the cluster. The default is set to $USER.
+2. Set the email (required): This is used to identify the user and required by the cluster.
+3. Set up Slack notifications (optional): This will send a test message to the webhook, and setup the webhook in the config. When your job starts you will receive a message at the webhook
+4. Set up a PVC (optional): This will create a PVC for the user to use in their jobs
+5. Set the default PVC to use (optional): Note only one pod can use the PVC at a time
+
 ### Basic Usage
 
 Launch a simple job:
@@ -50,11 +58,14 @@ kblaunch launch
 1. From local environment:
 
     ```bash
+    export PATH=...
+    export OPENAI_API_KEY=...
+    # pass the environment variables to the job
     kblaunch launch \
         --job-name myjob \
         --command "python script.py" \
         --local-env-vars PATH \
-        --local-env-vars PYTHONPATH
+        --local-env-vars OPENAI_API_KEY
     ```
 
 2. From Kubernetes secrets:
@@ -67,7 +78,7 @@ kblaunch launch
         --secrets-env-vars mysecret2
     ```
 
-3. From .env file:
+3. From .env file (default behavior):
 
     ```bash
     kblaunch launch \
@@ -75,6 +86,8 @@ kblaunch launch
         --command "python script.py" \
         --load-dotenv
     ```
+
+    If a .env exists in the current directory, it will be loaded and passed as environment variables to the job.
 
 ### GPU Jobs
 
