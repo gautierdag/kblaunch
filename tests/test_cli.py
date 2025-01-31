@@ -352,16 +352,12 @@ def test_kubernetes_job_run_existing(
         MagicMock(),  # Second call succeeds after deletion
     ]
 
-    # Mock user confirmation
-    monkeypatch.setattr("typer.confirm", lambda *args, **kwargs: True)
-
     # Run the job
     result = basic_job.run()
 
     # Verify job deletion and recreation
-    mock_api_instance.delete_namespaced_job.assert_called_once()
-    assert mock_api_instance.create_namespaced_job.call_count == 2
-    assert result == 0
+    assert mock_api_instance.create_namespaced_job.call_count == 1
+    assert result == 1
 
 
 @patch("kubernetes.client.BatchV1Api")

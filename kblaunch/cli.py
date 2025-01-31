@@ -17,6 +17,7 @@ from kblaunch.bash_utils import (
     install_vscode_command,
     send_message_command,
     setup_git_command,
+    start_vscode_tunnel_command,
 )
 
 MAX_CPU = 192
@@ -461,26 +462,7 @@ class KubernetesJob:
             return 0
         except ApiException as e:
             if e.status == 409:  # Conflict - job already exists
-                if not typer.confirm(
-                    f"Job '{self.name}' already exists. Do you want to delete it and create a new one?",
-                    default=False,
-                ):
-                    logger.info("Operation cancelled by user")
-                    return 1
-
-                # Try to delete and recreate
-                if delete_namespaced_job_safely(
-                    self.name, self.namespace or "default", self.user_name
-                ):
-                    try:
-                        api.create_namespaced_job(
-                            namespace=self.namespace or "default", body=job_dict
-                        )
-                        logger.info(f"Job '{self.name}' recreated successfully")
-                        return 0
-                    except ApiException as e:
-                        logger.error(f"Failed to recreate job: {e}")
-                        return 1
+                logger.info(f"Job '{self.name}' already exists")
                 return 1
             else:
                 logger.error(f"Failed to create job: {e}")
@@ -497,15 +479,12 @@ def check_if_completed(job_name: str, namespace: str = "informatics") -> bool:
     # Create an instance of the API class
     api = client.BatchV1Api()
 
-    job_exists = False
     is_completed = True
 
     # Check if the job exists in the specified namespace
     jobs = api.list_namespaced_job(namespace)
-    if job_name in {job.metadata.name for job in jobs.items}:
-        job_exists = True
 
-    if job_exists is True:
+    if job_name in {job.metadata.name for job in jobs.items}:
         job = api.read_namespaced_job(job_name, namespace)
         is_completed = False
 
@@ -809,6 +788,10 @@ def launch(
     dry_run: bool = typer.Option(False, help="Dry run"),
     priority: str = typer.Option("default", help="Priority class name"),
     vscode: bool = typer.Option(False, help="Install VS Code CLI in the container"),
+    tunnel: bool = typer.Option(
+        False,
+        help="Start a VS Code SSH tunnel on startup. Requires SLACK_WEBHOOK and --vscode",
+    ),
     startup_script: str = typer.Option(
         None, help="Path to startup script to run in container"
     ),
@@ -936,12 +919,17 @@ def launch(
         cmd = f"bash /startup.sh && {cmd}"
 
     # Build the full command with optional VS Code installation
-    full_cmd = ""
+    full_cmd = send_message_command(union)
     if config.get("git_secret"):
         full_cmd += setup_git_command()
     if vscode:
         full_cmd += install_vscode_command()
-    full_cmd += send_message_command(union) + cmd
+        if tunnel:
+            full_cmd += start_vscode_tunnel_command(union)
+    elif tunnel:
+        logger.error("Cannot start tunnel without VS Code installation")
+
+    full_cmd += cmd
 
     job = KubernetesJob(
         name=job_name,

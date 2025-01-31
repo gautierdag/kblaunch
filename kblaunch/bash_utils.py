@@ -36,17 +36,20 @@ def install_vscode_command() -> str:
 
 
 def start_vscode_tunnel_command(env_vars: set) -> str:
-    """Generate command to start the VS Code server."""
+    """
+    Generate command to start the VS Code tunnel.
+    This uses the SLACK_WEBHOOK environment variable to send a message to Slack with the device code.
+    See vscode.sh for the details.
+    """
     if "SLACK_WEBHOOK" not in env_vars:
-        logger.debug("SLACK_WEBHOOK not found in env_vars.")
+        logger.debug("SLACK_WEBHOOK required for tunnel.")
         return ""
 
     # download vscode script from github main branch and run it
     url = "https://raw.githubusercontent.com/gautierdag/kblaunch/refs/heads/main/kblaunch/vscode.sh"
-
     return (
         """apt-get update && apt-get install -y curl && """  # Install the curl command
-        f"""curl -Lk '{url}' --output vscode.sh && """
+        f"""curl -Lk {url} --output vscode.sh && """
         """chmod +x vscode.sh && """
         """./vscode.sh &"""
     )
