@@ -33,7 +33,7 @@ def install_vscode_command() -> str:
         """echo "deb [arch=amd64] https://packages.microsoft.com/repos/vscode stable main" > /etc/apt/sources.list.d/vscode.list && """
         """apt-get update && DEBIAN_FRONTEND=noninteractive apt install -y code && """
         """ln -s /usr/bin/code /usr/local/bin/code && """
-        """code --version && """
+        """code --version --user-data-dir='.' --no-sandbox && """
     )
 
 
