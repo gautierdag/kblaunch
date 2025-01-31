@@ -55,7 +55,12 @@ class GPU_PRODUCTS(str, Enum):
     h100_80gb_hbm3 = "NVIDIA-H100-80GB-HBM3"
 
 
-PRIORITY_CLASSES = ["default", "batch", "short"]
+class PRIORITY(str, Enum):
+    default = "default"
+    batch = "batch"
+    short = "short"
+
+
 NFS_SERVER = os.getenv("INFK8S_NFS_SERVER_IP", "10.24.1.255")
 
 app = typer.Typer()
@@ -73,9 +78,9 @@ def validate_gpu_constraints(gpu_product: str, gpu_limit: int, priority: str):
         raise ValueError("Cannot request more than one MIG instance in a single job")
 
     # Check H100 priority constraint
-    if "H100" in gpu_product and priority == "short":
+    if ("H100" in gpu_product or gpu_limit > 1) and priority == "short":
         raise ValueError(
-            "Cannot request H100 GPUs in the short-workload-high-priority class"
+            "Cannot request H100 GPUs or multiple GPUs in the short-workload-high-priority class"
         )
 
 
@@ -272,16 +277,6 @@ class KubernetesJob:
         self.user_name = user_name or os.environ.get("USER", "unknown")
         self.user_email = user_email  # This is now a required field.
         self.kueue_queue_name = kueue_queue_name
-
-        assert (
-            priority in PRIORITY_CLASSES
-        ), f"priority_class_name must be one of {PRIORITY_CLASSES}, not {priority}"
-        if priority == "high" and (self.gpu_limit > 1 or "H100" in self.gpu_product):
-            logger.error(
-                "Priority class 'high' is not allowed for multi-GPU jobs or H100 GPUs."
-            )
-            logger.error("Using 'default' priority class instead.")
-            priority = "default"
 
         self.labels = {
             "eidf/user": self.user_name,
@@ -786,7 +781,9 @@ def launch(
     nfs_server: str = typer.Option(NFS_SERVER, help="NFS server"),
     pvc_name: str = typer.Option(None, help="Persistent Volume Claim name"),
     dry_run: bool = typer.Option(False, help="Dry run"),
-    priority: str = typer.Option("default", help="Priority class name"),
+    priority: PRIORITY = typer.Option(
+        "default", help="Priority class name", show_default=True, show_choices=True
+    ),
     vscode: bool = typer.Option(False, help="Install VS Code CLI in the container"),
     tunnel: bool = typer.Option(
         False,
@@ -833,7 +830,7 @@ def launch(
 
     # Validate GPU constraints before creating job
     try:
-        validate_gpu_constraints(gpu_product.value, gpu_limit, priority)
+        validate_gpu_constraints(gpu_product.value, gpu_limit, priority.value)
     except ValueError as e:
         raise typer.BadParameter(str(e))
 
@@ -948,7 +945,7 @@ def launch(
         kueue_queue_name=queue_name,
         nfs_server=nfs_server,
         pvc_name=pvc_name,
-        priority=priority,
+        priority=priority.value,
         startup_script=script_content,
         git_secret=config.get("git_secret"),
     )
