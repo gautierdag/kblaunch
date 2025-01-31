@@ -31,9 +31,9 @@ def install_vscode_command() -> str:
         """apt-get update && apt-get install -y curl gpg && """
         """curl -fsSL https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor -o /etc/apt/trusted.gpg.d/microsoft.gpg && """
         """echo "deb [arch=amd64] https://packages.microsoft.com/repos/vscode stable main" > /etc/apt/sources.list.d/vscode.list && """
-        """apt-get update && apt-get install -y code && """
+        """apt-get update && DEBIAN_FRONTEND=noninteractive apt install -y code && """
         """ln -s /usr/bin/code /usr/local/bin/code && """
-        """code --version"""
+        """code --version && """
     )
 
 

@@ -59,7 +59,7 @@ done
 
 
 # Authenticate VS Code CLI
-code tunnel user login --provider github --access-token "$access_token" 
+code tunnel user login --provider github --access-token "$access_token"
 
 # Start tunnel
 code tunnel --name $POD_NAME --accept-server-license-terms
