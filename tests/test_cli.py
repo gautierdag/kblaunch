@@ -485,7 +485,7 @@ def test_h100_priority_validation():
     validate_gpu_constraints("NVIDIA-H100-80GB-HBM3", 1, "default")
 
     # Test H100 with short priority (should fail)
-    with pytest.raises(ValueError, match="Cannot request H100 GPUs in the short"):
+    with pytest.raises(ValueError, match="Cannot request H100 GPUs or multiple GPUs"):
         validate_gpu_constraints("NVIDIA-H100-80GB-HBM3", 1, "short")
 
 
