@@ -26,12 +26,14 @@ def send_message_command(env_vars: set) -> str:
 
 
 def install_vscode_command() -> str:
-    """Generate command to install VS Code CLI."""
+    """Generate command to install VS Code"""
     return (
-        """apt-get update && apt-get install -y curl && """  # Install the curl command
-        """curl -Lk 'https://code.visualstudio.com/sha/download?build=stable&os=cli-alpine-x64' --output vscode_cli.tar.gz && """
-        """tar -xf vscode_cli.tar.gz && """
-        """rm vscode_cli.tar.gz && """
+        """apt-get update && apt-get install -y curl gpg && """
+        """curl -fsSL https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor -o /etc/apt/trusted.gpg.d/microsoft.gpg && """
+        """echo "deb [arch=amd64] https://packages.microsoft.com/repos/vscode stable main" > /etc/apt/sources.list.d/vscode.list && """
+        """apt-get update && apt-get install -y code && """
+        """ln -s /usr/bin/code /usr/local/bin/code && """
+        """code --version"""
     )
 
 

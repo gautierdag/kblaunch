@@ -240,10 +240,7 @@ def test_launch_with_vscode(mock_kubernetes_job, mock_k8s_client):
 
     # Verify VS Code installation command was included
     job_args = mock_kubernetes_job.call_args[1]
-    assert (
-        "curl -Lk 'https://code.visualstudio.com/sha/download?build=stable&os=cli-alpine-x64'"
-        in job_args["args"][0]
-    )
+    assert "code --version" in job_args["args"][0]
 
 
 def test_launch_invalid_params():

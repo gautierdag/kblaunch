@@ -3,7 +3,6 @@
 # install libs
 apt-get update && apt-get install -y curl jq
 
-
 # GitHub OAuth Configuration
 CLIENT_ID="01ab8ac9400c4e429b23"  # Official VS Code client ID
 SCOPE="repo,read:org,user:email"
@@ -60,7 +59,7 @@ done
 
 
 # Authenticate VS Code CLI
-./code tunnel user login --provider github --access-token "$access_token" 
+code tunnel user login --provider github --access-token "$access_token" 
 
 # Start tunnel
-./code tunnel --name $POD_NAME --accept-server-license-terms --no-sleep
+code tunnel --name $POD_NAME --accept-server-license-terms
