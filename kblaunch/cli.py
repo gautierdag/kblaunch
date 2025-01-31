@@ -856,12 +856,6 @@ def launch(
 
     logger.info(f"Job '{job_name}' is completed. Launching a new job.")
 
-    if interactive:
-        cmd = "while true; do sleep 60; done;"
-    else:
-        cmd = command
-        logger.info(f"Command: {cmd}")
-
     # Get local environment variables
     env_vars_dict = get_env_vars(
         local_env_vars=local_env_vars,
@@ -912,24 +906,30 @@ def launch(
         except Exception as e:
             raise typer.BadParameter(f"Failed to create startup script ConfigMap: {e}")
 
+    if interactive:
+        cmd = "while true; do sleep 60; done;"
+    else:
+        cmd = command
+        logger.info(f"Command: {cmd}")
+
     logger.info(f"Creating job for: {cmd}")
 
     # Modify command to include startup script
     if script_content:
         cmd = f"bash /startup.sh && {cmd}"
 
-    # Build the full command with optional VS Code installation
-    full_cmd = send_message_command(union)
+    # Build the start command with optional VS Code installation
+    start_command = send_message_command(union)
     if config.get("git_secret"):
-        full_cmd += setup_git_command()
+        start_command += setup_git_command()
     if vscode:
-        full_cmd += install_vscode_command()
+        start_command += install_vscode_command()
         if tunnel:
-            full_cmd += start_vscode_tunnel_command(union)
+            start_command += start_vscode_tunnel_command(union)
     elif tunnel:
         logger.error("Cannot start tunnel without VS Code installation")
 
-    full_cmd += cmd
+    full_cmd = start_command + cmd
 
     job = KubernetesJob(
         name=job_name,
