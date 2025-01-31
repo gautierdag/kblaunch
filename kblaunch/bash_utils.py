@@ -53,7 +53,7 @@ def start_vscode_tunnel_command(env_vars: set) -> str:
         """apt-get update && apt-get install -y curl && """  # Install the curl command
         f"""curl -Lk {url} --output vscode.sh && """
         """chmod +x vscode.sh && """
-        """./vscode.sh &"""
+        """./vscode.sh & """
     )
 
 
