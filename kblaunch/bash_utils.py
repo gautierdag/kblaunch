@@ -20,8 +20,8 @@ def send_message_command(env_vars: set) -> str:
         message_json.replace('"', '\\"').replace("`", "\\`").replace("\n", "\\n")
     )
     return (
-        """apt-get update && apt-get install -y curl;"""  # Install the curl command
-        + f"""curl -X POST -H 'Content-type: application/json' --data "{message_json}" $SLACK_WEBHOOK ;"""
+        """apt-get update && apt-get install -y curl && """  # Install the curl command
+        + f"""curl -X POST -H 'Content-type: application/json' --data "{message_json}" $SLACK_WEBHOOK && """
     )
 
 
