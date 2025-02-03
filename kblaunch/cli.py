@@ -12,13 +12,13 @@ from kubernetes import client, config
 from kubernetes.client.rest import ApiException
 from loguru import logger
 
-
 from kblaunch.bash_utils import (
     install_vscode_command,
     send_message_command,
     setup_git_command,
     start_vscode_tunnel_command,
 )
+from kblaunch.plots import print_gpu_total, print_job_stats, print_user_stats
 
 MAX_CPU = 192
 MAX_RAM = 890
@@ -956,10 +956,37 @@ def launch(
         job.run()
 
 
+monitor_app = typer.Typer()
+app.add_typer(monitor_app, name="monitor", help="Monitor Kubernetes resources")
+
+
+@monitor_app.command("gpus")
+def monitor_gpus():
+    """Display overall GPU statistics by type"""
+    try:
+        print_gpu_total()
+    except Exception as e:
+        print(f"Error displaying GPU stats: {e}")
+
+
+@monitor_app.command("users")
+def monitor_users():
+    """Display GPU usage statistics by user"""
+    try:
+        print_user_stats()
+    except Exception as e:
+        print(f"Error displaying user stats: {e}")
+
+
+@monitor_app.command("jobs")
+def monitor_jobs():
+    """Display detailed job-level statistics"""
+    try:
+        print_job_stats()
+    except Exception as e:
+        print(f"Error displaying job stats: {e}")
+
+
 def cli():
     """Entry point for the application"""
     app()
-
-
-if __name__ == "__main__":
-    cli()
