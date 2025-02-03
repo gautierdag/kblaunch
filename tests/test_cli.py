@@ -392,13 +392,13 @@ def test_setup_command(mock_post, mock_check_pvc, mock_save):
     """Test setup command with mock inputs."""
     # Setup mocks
     mock_post.return_value.status_code = 200
-    mock_check_pvc.return_value = False
+    mock_check_pvc.return_value = True  # PVC exists
 
     # Mock all the user interactions
     confirm_responses = [
         True,  # Would you like to set the user?
         True,  # Would you like to set up Slack notifications?
-        True,  # Would you like to set up a PVC?
+        True,  # Would you like to use a PVC?
         True,  # Would you like to set as default PVC?
         True,  # Would you like to set up Git SSH authentication?
     ]
@@ -408,15 +408,12 @@ def test_setup_command(mock_post, mock_check_pvc, mock_save):
         "test@example.com",  # email input
         "https://hooks.slack.com/test",  # slack webhook
         "user-pvc",  # PVC name
-        "10Gi",  # PVC size
         "/home/user/.ssh/id_rsa",  # SSH key path
     ]
 
     with patch("typer.confirm", side_effect=confirm_responses), patch(
         "typer.prompt", side_effect=prompt_responses
-    ), patch("kblaunch.cli.create_pvc", return_value=True), patch(
-        "kblaunch.cli.create_git_secret", return_value=True
-    ):
+    ), patch("kblaunch.cli.create_git_secret", return_value=True):
         result = runner.invoke(app, ["setup"])
 
         assert result.exit_code == 0
@@ -425,9 +422,8 @@ def test_setup_command(mock_post, mock_check_pvc, mock_save):
                 "user": "user",
                 "email": "test@example.com",
                 "slack_webhook": "https://hooks.slack.com/test",
-                "pvc_name": "user-pvc",
                 "default_pvc": "user-pvc",
-                "git_secret": "user-git-ssh",  # Add git secret to expected config
+                "git_secret": "user-git-ssh",
             }
         )
 

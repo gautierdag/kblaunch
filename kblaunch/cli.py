@@ -666,6 +666,8 @@ def setup():
     default_user = os.getenv("USER")
     if "user" in config:
         default_user = config["user"]
+    else:
+        config["user"] = default_user
 
     if typer.confirm(
         f"Would you like to set the user? (default: {default_user})", default=False
@@ -689,36 +691,34 @@ def setup():
         )
         config["slack_webhook"] = webhook
 
-    if typer.confirm("Would you like to create a PVC?", default=False):
+    if typer.confirm("Would you like to use a PVC?", default=False):
         user = config["user"]
         current_default = config.get("default_pvc", f"{user}-pvc")
 
         pvc_name = typer.prompt(
-            f"Enter the desired PVC name (default: {current_default})",
+            f"Enter the PVC name to use (default: {current_default}). We will help you create it if it does not exist.",
             default=current_default,
         )
 
-        # Check if PVC exists
         if check_if_pvc_exists(pvc_name):
-            logger.warning(f"PVC '{pvc_name}' already exists")
+            if typer.confirm(
+                f"Would you like to set {pvc_name} as the default PVC?",
+                default=True,
+            ):
+                config["default_pvc"] = pvc_name
         else:
-            pvc_size = typer.prompt(
-                "Enter the desired PVC size (e.g. 10Gi)", default="10Gi"
-            )
-            try:
-                if create_pvc(user, pvc_name, pvc_size):
-                    config["pvc_name"] = pvc_name
-            except (ValueError, ApiException) as e:
-                logger.error(f"Failed to create PVC: {e}")
-
-        use_default = typer.confirm(
-            f"Would you like set {pvc_name} as the default PVC? "
-            f"Note that only one pod can use the PVC at a time. "
-            f"The current default is {current_default}",
-            default=True,
-        )
-        if use_default:
-            config["default_pvc"] = pvc_name
+            if typer.confirm(
+                f"PVC '{pvc_name}' does not exist. Would you like to create it?",
+                default=True,
+            ):
+                pvc_size = typer.prompt(
+                    "Enter the desired PVC size (e.g. 10Gi)", default="10Gi"
+                )
+                try:
+                    if create_pvc(user, pvc_name, pvc_size):
+                        config["default_pvc"] = pvc_name
+                except (ValueError, ApiException) as e:
+                    logger.error(f"Failed to create PVC: {e}")
 
     # Git authentication setup
     if typer.confirm("Would you like to set up Git SSH authentication?", default=False):
