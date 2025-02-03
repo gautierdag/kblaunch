@@ -230,12 +230,12 @@ class KubernetesJob:
         git_secret: Optional[str] = None,
     ):
         # Validate gpu_limit first
-        assert (
-            gpu_limit is not None
-        ), f"gpu_limit must be set to a value between 1 and {MAX_GPU}, not {gpu_limit}"
-        assert (
-            0 < gpu_limit <= MAX_GPU
-        ), f"gpu_limit must be between 1 and {MAX_GPU}, got {gpu_limit}"
+        assert gpu_limit is not None, (
+            f"gpu_limit must be set to a value between 1 and {MAX_GPU}, not {gpu_limit}"
+        )
+        assert 0 < gpu_limit <= MAX_GPU, (
+            f"gpu_limit must be between 1 and {MAX_GPU}, got {gpu_limit}"
+        )
 
         self.name = name
         self.image = image
@@ -247,9 +247,9 @@ class KubernetesJob:
 
         self.cpu_request = cpu_request if cpu_request else 12 * gpu_limit
         self.ram_request = ram_request if ram_request else f"{80 * gpu_limit}G"
-        assert (
-            int(self.cpu_request) <= MAX_CPU
-        ), f"cpu_request must be less than {MAX_CPU}"
+        assert int(self.cpu_request) <= MAX_CPU, (
+            f"cpu_request must be less than {MAX_CPU}"
+        )
 
         self.volume_mounts = [
             {"name": "workspace", "mountPath": "/workspace", "readOnly": True},

@@ -15,9 +15,10 @@ from kblaunch.plots import (
 @pytest.fixture
 def mock_k8s_api():
     """Mock Kubernetes API responses"""
-    with patch("kubernetes.config.load_kube_config"), patch(
-        "kubernetes.client.CoreV1Api"
-    ) as mock_api:
+    with (
+        patch("kubernetes.config.load_kube_config"),
+        patch("kubernetes.client.CoreV1Api") as mock_api,
+    ):
         # Create mock pod
         mock_pod = MagicMock()
         mock_pod.status.phase = "Running"
@@ -167,6 +168,8 @@ def test_get_data_empty(mock_k8s_api):
         "gpu_mem_used",
         "inactive",
         "interactive",
+        "status",
+        "pending_reason",
     ]
 
 

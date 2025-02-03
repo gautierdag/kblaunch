@@ -74,30 +74,66 @@ def get_gpu_metrics(v1, pod_name: str, namespace: str, permission_errors: dict) 
         return get_default_metrics()
 
 
-def get_data(load_gpu_metrics=False, namespace="informatics") -> pd.DataFrame:
+def get_pod_pending_reason(api_instance, pod_name: str, namespace: str) -> str:
+    """Get the reason why a pod is pending from events."""
+    try:
+        events = api_instance.list_namespaced_event(
+            namespace=namespace,
+            field_selector=f"involvedObject.name={pod_name}",
+        )
+        if len(events.items) == 0:
+            return "Unknown"
+        last_event = events.items[-1]
+        if last_event.reason == "FailedScheduling":
+            message = last_event.message
+        elif last_event.reason == "FailedCreate":
+            message = last_event.message
+        elif last_event.reason == "FailedMount":
+            message = last_event.message
+        else:
+            return "Unknown"
+        # logger.debug(f"Found event for pod {pod_name}: {last_event.reason} - {message}")
+        if "are available:" in message:
+            message = message.split(" are available:")[1]
+        if " preemption:" in message:
+            message = message.split(" preemption:")[0]
+        if " had untolerated taint" in message:
+            message = message.split(" had untolerated taint")[0]
+        # message = message.split(" preemption:")[0].split(" are available.")[1]
+        return last_event.reason + ": " + message.strip()
+    except Exception as e:
+        logger.debug(f"Error getting pending reason for pod {pod_name}: {e}")
+        return "Unknown"
+
+
+def get_data(
+    load_gpu_metrics=False, namespace="informatics", include_pending=False
+) -> pd.DataFrame:
     """Get live GPU usage data from Kubernetes pods."""
     config.load_kube_config()
     v1 = client.CoreV1Api()
 
-    # Get pods with queue label filter
-    pods = v1.list_namespaced_pod(
-        namespace=namespace,
-    )
+    pods = v1.list_namespaced_pod(namespace=namespace)
     records = []
 
-    # Filter running pods with GPUs first to get accurate total
+    # Filter pods based on GPU requests and status
     gpu_pods = [
         pod
         for pod in pods.items
-        if pod.status.phase == "Running"
-        and sum(
-            int(c.resources.requests.get("nvidia.com/gpu", 0))
-            for c in pod.spec.containers
+        if (
+            sum(
+                int(c.resources.requests.get("nvidia.com/gpu", 0))
+                for c in pod.spec.containers
+            )
+            > 0
+            and (
+                pod.status.phase == "Running"
+                or (include_pending and pod.status.phase == "Pending")
+            )
         )
-        > 0
     ]
 
-    permission_errors = {"count": 0}  # Track permission errors
+    permission_errors = {"count": 0}
 
     # Create progress bars with warning suppression
     with warnings.catch_warnings():
@@ -118,21 +154,14 @@ def get_data(load_gpu_metrics=False, namespace="informatics") -> pd.DataFrame:
             )
 
             for pod in gpu_pods:
-                #         # Get basic pod info
                 namespace = pod.metadata.namespace
                 pod_name = pod.metadata.name
-                node_name = pod.spec.node_name
                 username = pod.metadata.labels.get("eidf/user", "unknown")
 
                 progress.update(
                     collect_task, advance=1, description=f"[cyan]Processing {pod_name}"
                 )
 
-                # Skip pods that aren't running
-                if pod.status.phase != "Running":
-                    continue
-
-                # Skip pods without GPU requests
                 gpu_requests = sum(
                     int(c.resources.requests.get("nvidia.com/gpu", 0))
                     for c in pod.spec.containers
@@ -140,10 +169,29 @@ def get_data(load_gpu_metrics=False, namespace="informatics") -> pd.DataFrame:
                 if gpu_requests == 0:
                     continue
 
-                gpu_name = pod.spec.node_selector["nvidia.com/gpu.product"]
+                # Handle both running and pending pods
+                if pod.status.phase == "Pending":
+                    pending_reason = get_pod_pending_reason(v1, pod_name, namespace)
+                    gpu_name = pod.spec.node_selector.get(
+                        "nvidia.com/gpu.product", "Unknown"
+                    )
+                    node_name = "Pending"
+                    # Get pod creation time directly from metadata
+                    created = pod.metadata.creation_timestamp
+                    if isinstance(created, str):
+                        created = (
+                            datetime.strptime(created, "%Y-%m-%dT%H:%M:%SZ")
+                            .replace(tzinfo=timezone.utc)
+                            .astimezone()
+                        )
+                else:
+                    pending_reason = None
+                    gpu_name = pod.spec.node_selector["nvidia.com/gpu.product"]
+                    node_name = pod.spec.node_name
+                    created = None
 
-                # Get resource requests
-                container = pod.spec.containers[0]  # Assuming single container
+                # Get resource requests and other data
+                container = pod.spec.containers[0]
                 cpu_requested = int(float(container.resources.requests.get("cpu", "0")))
                 memory_requested = int(
                     float(container.resources.requests.get("memory", "0").rstrip("Gi"))
@@ -164,14 +212,14 @@ def get_data(load_gpu_metrics=False, namespace="informatics") -> pd.DataFrame:
                     pattern in full_command for pattern in interactive_patterns
                 )
 
-                # Get GPU metrics
+                # Get GPU metrics for running pods only
                 gpu_metrics = get_default_metrics()
-                if load_gpu_metrics:
+                if load_gpu_metrics and pod.status.phase == "Running":
                     gpu_metrics = get_gpu_metrics(
                         v1, pod_name, namespace, permission_errors
                     )
 
-                # Create a record for each GPU assigned
+                # Create records including pending status and creation time
                 for gpu_id in range(gpu_requests):
                     record = {
                         "pod_name": pod_name,
@@ -182,7 +230,10 @@ def get_data(load_gpu_metrics=False, namespace="informatics") -> pd.DataFrame:
                         "memory_requested": memory_requested,
                         "gpu_name": gpu_name,
                         "gpu_id": gpu_id,
-                        "interactive": is_interactive,  # Add the interactive field
+                        "status": pod.status.phase,
+                        "pending_reason": pending_reason,
+                        "interactive": is_interactive,
+                        "created": created,  # Add creation time
                         **gpu_metrics,
                     }
                     records.append(record)
@@ -212,6 +263,8 @@ def get_data(load_gpu_metrics=False, namespace="informatics") -> pd.DataFrame:
                 "gpu_mem_used",
                 "inactive",
                 "interactive",
+                "status",
+                "pending_reason",
             ]
         )
 
@@ -392,27 +445,88 @@ def get_queue_data(namespace="informatics") -> pd.DataFrame:
 
 
 def print_gpu_total(namespace="informatics"):
-    latest = get_data(load_gpu_metrics=False, namespace=namespace)
+    latest = get_data(load_gpu_metrics=False, namespace=namespace, include_pending=True)
     console = Console()
 
-    gpu_counts = latest["gpu_name"].value_counts()
+    # Separate running and pending GPUs
+    running_gpus = latest[latest["status"] == "Running"]["gpu_name"].value_counts()
+    pending_gpus = latest[latest["status"] == "Pending"]["gpu_name"].value_counts()
+
+    # Create table with both running and pending GPUs
     gpu_table = Table(title="GPU Count by Type", show_footer=True)
     gpu_table.add_column("GPU Type", style="cyan", footer="TOTAL")
-    gpu_table.add_column(
-        "Count",
-        style="green",
-        justify="right",
-        footer=str(sum(gpu_counts)),
-    )
+    gpu_table.add_column("Running", style="green", justify="right")
+    gpu_table.add_column("Pending", style="red", justify="right")
+    gpu_table.add_column("Total", style="yellow", justify="right")
 
-    for gpu_type, count in gpu_counts.items():
-        gpu_table.add_row(gpu_type, str(count))
+    # Combine all GPU types
+    all_gpu_types = set(running_gpus.index) | set(pending_gpus.index)
+
+    total_running = 0
+    total_pending = 0
+
+    for gpu_type in sorted(all_gpu_types):
+        running = running_gpus.get(gpu_type, 0)
+        pending = pending_gpus.get(gpu_type, 0)
+        total = running + pending
+
+        gpu_table.add_row(gpu_type, str(running), str(pending), str(total))
+
+        total_running += running
+        total_pending += pending
+
+    # Add footer with totals
+    gpu_table.columns[1].footer = str(total_running)
+    gpu_table.columns[2].footer = str(total_pending)
+    gpu_table.columns[3].footer = str(total_running + total_pending)
 
     console.print(gpu_table)
 
+    # Print pending pod details if any exist
+    pending_pods = latest[latest["status"] == "Pending"]
+    # sort by creation time
+    pending_pods = pending_pods.sort_values("created")
+
+    if not pending_pods.empty:
+        console.print("\n[bold red]Pending Pods:[/bold red]")
+        pending_table = Table(show_header=True)
+        pending_table.add_column("Pod Name", style="cyan")
+        pending_table.add_column("User", style="blue")
+        pending_table.add_column("GPUs", style="red")
+        pending_table.add_column("Time", style="yellow")
+        pending_table.add_column("Reason", style="yellow", max_width=60)
+
+        # Calculate times for pending pods
+        now = datetime.now(timezone.utc).astimezone()
+
+        for _, row in pending_pods.drop_duplicates("pod_name").iterrows():
+            # Calculate wait time from creation timestamp
+            if row.get("created"):
+                wait_time = now - row["created"]
+                days = int(wait_time.total_seconds() // 86400)
+                if days > 0:
+                    hours = int((wait_time.total_seconds() % 86400) // 3600)
+                    time_str = f"{days}d {hours}h" if hours > 0 else f"{days}d"
+                else:
+                    hours = int(wait_time.total_seconds() // 3600)
+                    mins = int((wait_time.total_seconds() % 3600) // 60)
+                    time_str = f"{hours}h {mins}m" if hours > 0 else f"{mins}m"
+            else:
+                time_str = "Unknown"
+
+            pending_table.add_row(
+                row["pod_name"],
+                row["username"],
+                str(sum(pending_pods["pod_name"] == row["pod_name"])),
+                time_str,
+                row["pending_reason"],
+            )
+
+        console.print(pending_table)
+
 
 def print_user_stats(namespace="informatics"):
-    latest = get_data(load_gpu_metrics=True, namespace=namespace)
+    latest = get_data(load_gpu_metrics=True, namespace=namespace, include_pending=False)
     console = Console()
 
     user_stats = (
@@ -452,7 +566,7 @@ def print_user_stats(namespace="informatics"):
 
 
 def print_job_stats(namespace="informatics"):
-    latest = get_data(load_gpu_metrics=True, namespace=namespace)
+    latest = get_data(load_gpu_metrics=True, namespace=namespace, include_pending=False)
     console = Console()
 
     job_stats = (
