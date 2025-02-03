@@ -62,7 +62,7 @@ done
 code tunnel user login --provider github --access-token "$access_token"
 
 # Clip pod name to <20 characters
-TUNNEL_NAME = $(echo $POD_NAME | cut -c 1-20)
+TUNNEL_NAME=$(echo $POD_NAME | cut -c 1-20)
 
 # Start tunnel
 code tunnel --name $TUNNEL_NAME --accept-server-license-terms
