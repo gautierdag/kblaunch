@@ -6,21 +6,20 @@ import typer
 import yaml
 from kubernetes import client, config
 from kubernetes.client.rest import ApiException
-from loguru import logger
 from typer.testing import CliRunner
 
 from kblaunch.cli import (
     KubernetesJob,
     app,
     check_if_completed,
+    create_git_secret,
     get_env_vars,
     is_mig_gpu,
     load_config,
     read_startup_script,
     send_message_command,
-    validate_gpu_constraints,
     setup_git_command,
-    create_git_secret,
+    validate_gpu_constraints,
 )
 
 
@@ -191,8 +190,10 @@ def test_launch_with_vscode(mock_kubernetes_job, mock_k8s_client):
             app,
             [
                 "launch",
-                "--job-name", "test-job",
-                "--command", "python test.py",
+                "--job-name",
+                "test-job",
+                "--command",
+                "python test.py",
                 "--vscode",
             ],
         )
@@ -505,7 +506,8 @@ def test_launch_with_startup_script(mock_kubernetes_job, mock_k8s_client, tmp_pa
                 "test-job",
                 "--command",
                 "python test.py",
-                "--startup-script", str(script_path),
+                "--startup-script",
+                str(script_path),
             ],
         )
 
@@ -518,7 +520,9 @@ def test_launch_with_startup_script(mock_kubernetes_job, mock_k8s_client, tmp_pa
         assert "bash /startup.sh &&" in job_args["args"][0]
 
 
-def test_launch_with_startup_script_update(mock_kubernetes_job, mock_k8s_client, tmp_path):
+def test_launch_with_startup_script_update(
+    mock_kubernetes_job, mock_k8s_client, tmp_path
+):
     """Test launch command when ConfigMap already exists."""
     # Create a temporary script file
     script_path = tmp_path / "startup.sh"
@@ -544,7 +548,8 @@ def test_launch_with_startup_script_update(mock_kubernetes_job, mock_k8s_client,
                 "test-job",
                 "--command",
                 "python test.py",
-                "--startup-script", str(script_path),
+                "--startup-script",
+                str(script_path),
             ],
         )
 
