@@ -488,8 +488,7 @@ def print_gpu_total(namespace="informatics"):
     pending_pods = pending_pods.sort_values("created")
 
     if not pending_pods.empty:
-        console.print("\n[bold red]Pending Pods:[/bold red]")
-        pending_table = Table(show_header=True)
+        pending_table = Table(show_header=True, title="Pending Pods")
         pending_table.add_column("Pod Name", style="cyan")
         pending_table.add_column("User", style="blue")
         pending_table.add_column("GPUs", style="red")
