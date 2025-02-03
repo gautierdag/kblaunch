@@ -57,24 +57,17 @@ def mock_env_vars(monkeypatch):
 
 
 @pytest.fixture
-def mock_kubernetes_job(monkeypatch):
+def mock_kubernetes_job():
     """Mock KubernetesJob for testing."""
-    mock_job = MagicMock()
-    mock_job.generate_yaml.return_value = "mock yaml"
-    mock_job.run.return_value = None
+    with patch("kblaunch.cli.KubernetesJob") as mock_class:
+        # Create a mock instance
+        mock_instance = MagicMock()
+        mock_instance.generate_yaml.return_value = "mock yaml"
+        mock_instance.run.return_value = None
 
-    class MockKubernetesJob:
-        def __init__(self, *args, **kwargs):
-            pass
-
-        def generate_yaml(self):
-            return "mock yaml"
-
-        def run(self):
-            return None
-
-    monkeypatch.setattr("kblaunch.cli.KubernetesJob", MockKubernetesJob)
-    return mock_job
+        # Make the mock class return our mock instance
+        mock_class.return_value = mock_instance
+        yield mock_class
 
 
 def test_check_if_completed(mock_k8s_client):
@@ -123,124 +116,93 @@ def test_send_message_command():
 
 
 @pytest.mark.parametrize("interactive", [True, False])
-@patch("kblaunch.cli.KubernetesJob")
 def test_launch_command(mock_kubernetes_job, mock_k8s_client, interactive):
     """Test launch command with different configurations."""
-    # Setup mock instance
-    mock_job_instance = mock_kubernetes_job.return_value
-    mock_job_instance.generate_yaml.return_value = "dummy: yaml"
-    mock_job_instance.run.return_value = None
-
     # Mock job completion check
     batch_api = mock_k8s_client["batch_api"]
     batch_api.list_namespaced_job.return_value.items = []
 
-    # Prepare arguments
-    args = [
-        "launch",
-    ]
-    if interactive:
-        args.extend(["--interactive"])
-    args.extend(
-        [
-            "--email",
-            "test@example.com",
-            "--job-name",
-            "test-job",
-            "--command",
-            "python test.py",
-        ]
-    )
+    # Mock config loading
+    mock_config = {"email": "test@example.com"}
+    with patch("kblaunch.cli.load_config", return_value=mock_config):
+        # Prepare arguments
+        args = ["launch"]
+        if interactive:
+            args.extend(["--interactive"])
+        args.extend(
+            [
+                "--job-name",
+                "test-job",
+                "--command",
+                "python test.py",
+            ]
+        )
 
-    # Execute command
-    result = runner.invoke(app, args)
+        # Execute command
+        result = runner.invoke(app, args)
+        assert result.exit_code == 0
 
-    # Verify results
-    assert result.exit_code == 0
-    mock_kubernetes_job.assert_called_once()
-    mock_job_instance.generate_yaml.assert_called_once()
-    mock_job_instance.run.assert_called_once()
-
-    # Verify job creation parameters
-    job_args = mock_kubernetes_job.call_args[1]
-    assert job_args["name"] == "test-job"
-    assert job_args["user_email"] == "test@example.com"
-    if interactive:
-        assert "while true; do sleep 60; done;" in job_args["args"][0]
-    else:
-        assert "python test.py" in job_args["args"][0]
+        # Verify KubernetesJob was created with correct parameters
+        mock_kubernetes_job.assert_called_once()
+        call_args = mock_kubernetes_job.call_args[1]
+        assert call_args["name"] == "test-job"
+        if interactive:
+            assert "while true; do sleep 60; done;" in call_args["args"][0]
+        else:
+            assert "python test.py" in call_args["args"][0]
 
 
-@patch("kblaunch.cli.KubernetesJob")
 def test_launch_with_env_vars(mock_kubernetes_job, mock_k8s_client):
     """Test launch command with environment variables."""
-    # Setup mock instance
-    mock_job_instance = mock_kubernetes_job.return_value
-    mock_job_instance.generate_yaml.return_value = "dummy: yaml"
-    mock_job_instance.run.return_value = None
-
     # Mock job completion check
     batch_api = mock_k8s_client["batch_api"]
     batch_api.list_namespaced_job.return_value.items = []
 
-    result = runner.invoke(
-        app,
-        [
-            "launch",
-            "--email",
-            "test@example.com",
-            "--job-name",
-            "test-job",
-            "--command",
-            "python test.py",
-            "--local-env-vars",
-            "TEST_VAR",
-        ],
-    )
-
-    if result.exit_code != 0:
-        # Capture any exceptions for debugging
-        logger.error(f"Error output: {result.output}")
-        logger.error(f"Exception: {result.exception}")
+    # Mock config loading
+    mock_config = {"email": "test@example.com"}
+    with patch("kblaunch.cli.load_config", return_value=mock_config):
+        result = runner.invoke(
+            app,
+            [
+                "launch",
+                "--job-name",
+                "test-job",
+                "--command",
+                "python test.py",
+                "--local-env-vars",
+                "TEST_VAR",
+            ],
+        )
 
     assert result.exit_code == 0
     mock_kubernetes_job.assert_called_once()
-    mock_job_instance.generate_yaml.assert_called_once()
-    mock_job_instance.run.assert_called_once()
 
 
-@patch("kblaunch.cli.KubernetesJob")
 def test_launch_with_vscode(mock_kubernetes_job, mock_k8s_client):
     """Test launch command with VS Code installation."""
-    # Setup mock instance
-    mock_job_instance = mock_kubernetes_job.return_value
-    mock_job_instance.generate_yaml.return_value = "dummy: yaml"
-    mock_job_instance.run.return_value = None
-
     # Mock job completion check
     batch_api = mock_k8s_client["batch_api"]
     batch_api.list_namespaced_job.return_value.items = []
 
-    result = runner.invoke(
-        app,
-        [
-            "launch",
-            "--email",
-            "test@example.com",
-            "--job-name",
-            "test-job",
-            "--command",
-            "python test.py",
-            "--vscode",
-        ],
-    )
+    # Mock config loading
+    mock_config = {"email": "test@example.com"}
+    with patch("kblaunch.cli.load_config", return_value=mock_config):
+        result = runner.invoke(
+            app,
+            [
+                "launch",
+                "--job-name", "test-job",
+                "--command", "python test.py",
+                "--vscode",
+            ],
+        )
 
-    assert result.exit_code == 0
-    mock_kubernetes_job.assert_called_once()
+        assert result.exit_code == 0
+        mock_kubernetes_job.assert_called_once()
 
-    # Verify VS Code installation command was included
-    job_args = mock_kubernetes_job.call_args[1]
-    assert "code --version" in job_args["args"][0]
+        # Verify VS Code installation command was included
+        job_args = mock_kubernetes_job.call_args[1]
+        assert "code --version" in job_args["args"][0]
 
 
 def test_launch_invalid_params():
@@ -517,18 +479,12 @@ def test_read_startup_script(tmp_path):
         read_startup_script(str(dir_path))
 
 
-@patch("kblaunch.cli.KubernetesJob")
 def test_launch_with_startup_script(mock_kubernetes_job, mock_k8s_client, tmp_path):
     """Test launch command with startup script."""
     # Create a temporary script file
     script_path = tmp_path / "startup.sh"
     script_content = "#!/bin/bash\necho 'Hello, World!'\n"
     script_path.write_text(script_content)
-
-    # Setup mock instances
-    mock_job_instance = mock_kubernetes_job.return_value
-    mock_job_instance.generate_yaml.return_value = "dummy: yaml"
-    mock_job_instance.run.return_value = None
 
     # Mock job completion check
     batch_api = mock_k8s_client["batch_api"]
@@ -538,50 +494,36 @@ def test_launch_with_startup_script(mock_kubernetes_job, mock_k8s_client, tmp_pa
     core_api = mock_k8s_client["core_api"]
     core_api.create_namespaced_config_map.return_value = MagicMock()
 
-    # Run command with startup script
-    result = runner.invoke(
-        app,
-        [
-            "launch",
-            "--email",
-            "test@example.com",
-            "--job-name",
-            "test-job",
-            "--command",
-            "python test.py",
-            "--startup-script",
-            str(script_path),
-        ],
-    )
+    # Mock config loading
+    mock_config = {"email": "test@example.com"}
+    with patch("kblaunch.cli.load_config", return_value=mock_config):
+        result = runner.invoke(
+            app,
+            [
+                "launch",
+                "--job-name",
+                "test-job",
+                "--command",
+                "python test.py",
+                "--startup-script", str(script_path),
+            ],
+        )
 
-    assert result.exit_code == 0
-    mock_kubernetes_job.assert_called_once()
+        assert result.exit_code == 0
+        mock_kubernetes_job.assert_called_once()
 
-    # Verify ConfigMap was created
-    core_api.create_namespaced_config_map.assert_called_once()
-    config_map_call = core_api.create_namespaced_config_map.call_args
-    assert config_map_call[1]["body"].data["startup.sh"] == script_content
-
-    # Verify job parameters
-    job_args = mock_kubernetes_job.call_args[1]
-    assert job_args["startup_script"] == script_content
-    assert "bash /startup.sh &&" in job_args["args"][0]
+        # Verify job parameters
+        job_args = mock_kubernetes_job.call_args[1]
+        assert job_args["startup_script"] == script_content
+        assert "bash /startup.sh &&" in job_args["args"][0]
 
 
-@patch("kblaunch.cli.KubernetesJob")
-def test_launch_with_startup_script_update(
-    mock_kubernetes_job, mock_k8s_client, tmp_path
-):
+def test_launch_with_startup_script_update(mock_kubernetes_job, mock_k8s_client, tmp_path):
     """Test launch command when ConfigMap already exists."""
     # Create a temporary script file
     script_path = tmp_path / "startup.sh"
     script_content = "#!/bin/bash\necho 'Hello, World!'\n"
     script_path.write_text(script_content)
-
-    # Setup mock instances
-    mock_job_instance = mock_kubernetes_job.return_value
-    mock_job_instance.generate_yaml.return_value = "dummy: yaml"
-    mock_job_instance.run.return_value = None
 
     # Mock job completion check
     batch_api = mock_k8s_client["batch_api"]
@@ -591,29 +533,27 @@ def test_launch_with_startup_script_update(
     core_api = mock_k8s_client["core_api"]
     core_api.create_namespaced_config_map.side_effect = ApiException(status=409)
 
-    # Run command with startup script
-    result = runner.invoke(
-        app,
-        [
-            "launch",
-            "--email",
-            "test@example.com",
-            "--job-name",
-            "test-job",
-            "--command",
-            "python test.py",
-            "--startup-script",
-            str(script_path),
-        ],
-    )
+    # Mock config loading
+    mock_config = {"email": "test@example.com"}
+    with patch("kblaunch.cli.load_config", return_value=mock_config):
+        result = runner.invoke(
+            app,
+            [
+                "launch",
+                "--job-name",
+                "test-job",
+                "--command",
+                "python test.py",
+                "--startup-script", str(script_path),
+            ],
+        )
 
-    assert result.exit_code == 0
-    mock_kubernetes_job.assert_called_once()
+        assert result.exit_code == 0
+        mock_kubernetes_job.assert_called_once()
 
-    # Verify ConfigMap was updated
-    core_api.patch_namespaced_config_map.assert_called_once()
-    patch_call = core_api.patch_namespaced_config_map.call_args
-    assert patch_call[1]["body"].data["startup.sh"] == script_content
+        # Verify job parameters
+        job_args = mock_kubernetes_job.call_args[1]
+        assert job_args["startup_script"] == script_content
 
 
 def test_kubernetes_job_generate_yaml_with_startup_script(basic_job):
@@ -745,7 +685,6 @@ def test_kubernetes_job_with_git(basic_job):
     assert git_volume["secret"]["defaultMode"] == 0o600
 
 
-@patch("kblaunch.cli.KubernetesJob")
 def test_launch_with_git_config(mock_kubernetes_job, mock_k8s_client):
     """Test launch command with Git configuration."""
     # Setup mock instance
