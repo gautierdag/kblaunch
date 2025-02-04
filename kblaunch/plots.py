@@ -435,6 +435,20 @@ def get_queue_data(namespace="informatics") -> pd.DataFrame:
 
             # Extract resource requests
             requests = resources.get("requests", {})
+            limits = resources.get("limits", {})
+            if "cpu" in requests:
+                cpu_request = int(float(requests["cpu"]))
+            elif "cpu" in limits:
+                cpu_request = int(float(limits["cpu"]))
+            else:
+                cpu_request = 0
+            if "memory" in requests:
+                memory_request = int(float(requests["memory"].rstrip("Gi")))
+            elif "memory" in limits:
+                memory_request = int(float(limits["memory"].rstrip("Gi")))
+            else:
+                memory_request = 0
+
             # if workload is Admitted then we are interested in the last message of Job and not the workload
             if status != "Admitted" and status != "Unknown":
                 message = wl["status"]["conditions"][-1]["message"]
@@ -449,8 +463,8 @@ def get_queue_data(namespace="informatics") -> pd.DataFrame:
                     datetime.now(timezone.utc).astimezone() - created
                 ).total_seconds()
                 / 60,
-                "cpus": int(float(requests.get("cpu", "0"))),
-                "memory": int(float(requests.get("memory", "0").rstrip("Gi"))),
+                "cpus": cpu_request,
+                "memory": memory_request,
                 "gpus": gpu_request,
                 "gpu_type": wl["spec"]["podSets"][0]["template"]["spec"]
                 .get("nodeSelector", {})
