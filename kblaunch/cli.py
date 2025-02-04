@@ -1,3 +1,4 @@
+import importlib.metadata
 import json
 import os
 import re
@@ -11,6 +12,7 @@ import yaml
 from kubernetes import client, config
 from kubernetes.client.rest import ApiException
 from loguru import logger
+from typing_extensions import Annotated
 
 from kblaunch.bash_utils import (
     install_vscode_command,
@@ -1015,6 +1017,25 @@ def monitor_queue(
         print_queue_stats(namespace=namespace)
     except Exception as e:
         print(f"Error displaying queue stats: {e}")
+
+
+def version_callback(value: bool):
+    if value:
+        typer.echo(importlib.metadata.version("kblaunch"))
+        raise typer.Exit()
+
+
+@app.callback()
+def main(
+    version: Annotated[
+        Optional[bool],
+        typer.Option(
+            "--version", callback=version_callback, help="Show version information"
+        ),
+    ] = None,
+):
+    """Entry point for the application"""
+    pass  # The callback doesn't need to do anything else
 
 
 def cli():
