@@ -207,16 +207,19 @@ def test_launch_with_vscode(mock_kubernetes_job, mock_k8s_client):
 
 
 def test_launch_invalid_params():
-    """Test launch command with invalid parameters."""
+    """Test launch command fails when no command is provided in non-interactive mode."""
     result = runner.invoke(
         app,
         [
             "launch",
             "--job-name",
-            "test-job",  # Missing required params
+            "test-job",
+            "--interactive",
+            "false",  # Non-interactive mode
+            "--command",
+            "",  # Empty command should fail
         ],
     )
-
     assert result.exit_code != 0
 
 
@@ -338,7 +341,7 @@ def test_kubernetes_job_run_error(mock_batch_api, mock_k8s_config, basic_job):
     mock_api_instance.create_namespaced_job.assert_called_once()
 
 
-@pytest.mark.parametrize("gpu_limit", [-1, 0, 9])
+@pytest.mark.parametrize("gpu_limit", [-1, 9])  # Remove 0 as it's now valid
 def test_invalid_gpu_limit(gpu_limit):
     with pytest.raises(AssertionError):
         KubernetesJob(
@@ -411,9 +414,11 @@ def test_setup_command(mock_post, mock_check_pvc, mock_save):
         "/home/user/.ssh/id_rsa",  # SSH key path
     ]
 
-    with patch("typer.confirm", side_effect=confirm_responses), patch(
-        "typer.prompt", side_effect=prompt_responses
-    ), patch("kblaunch.cli.create_git_secret", return_value=True):
+    with (
+        patch("typer.confirm", side_effect=confirm_responses),
+        patch("typer.prompt", side_effect=prompt_responses),
+        patch("kblaunch.cli.create_git_secret", return_value=True),
+    ):
         result = runner.invoke(app, ["setup"])
 
         assert result.exit_code == 0
@@ -724,6 +729,39 @@ def test_launch_with_git_config(mock_kubernetes_job, mock_k8s_client):
     assert job_args["git_secret"] == "test-git-secret"
     assert job_args["env_vars"]["USER"] == "test-user"
     assert job_args["env_vars"]["GIT_EMAIL"] == "test@example.com"
+
+
+def test_launch_cpu_only_job(mock_kubernetes_job, mock_k8s_client):
+    """Test launching a CPU-only job."""
+    # Mock job completion check
+    batch_api = mock_k8s_client["batch_api"]
+    batch_api.list_namespaced_job.return_value.items = []
+
+    # Mock config loading
+    mock_config = {"email": "test@example.com"}
+    with patch("kblaunch.cli.load_config", return_value=mock_config):
+        result = runner.invoke(
+            app,
+            [
+                "launch",
+                "--job-name",
+                "test-job",
+                "--command",
+                "python test.py",
+                "--gpu-limit",
+                "0",  # CPU-only job
+            ],
+        )
+
+        assert result.exit_code == 0
+        mock_kubernetes_job.assert_called_once()
+
+        # Verify job parameters
+        job_args = mock_kubernetes_job.call_args[1]
+        assert job_args["gpu_limit"] == 0
+        assert job_args["gpu_type"] is None
+        assert job_args["gpu_product"] is None
+        assert job_args["cpu_request"] == "1"  # Default CPU for non-GPU jobs
 
 
 runner = CliRunner()

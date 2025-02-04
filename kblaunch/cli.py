@@ -78,6 +78,10 @@ def is_mig_gpu(gpu_product: str) -> bool:
 
 def validate_gpu_constraints(gpu_product: str, gpu_limit: int, priority: str):
     """Validate GPU constraints for MIG and H100 instances."""
+    # Skip validation for non-GPU jobs
+    if gpu_limit == 0:
+        return
+
     # Check MIG constraint
     if is_mig_gpu(gpu_product) and gpu_limit > 1:
         raise ValueError("Cannot request more than one MIG instance in a single job")
@@ -230,11 +234,9 @@ class KubernetesJob:
         git_secret: Optional[str] = None,
     ):
         # Validate gpu_limit first
-        assert gpu_limit is not None, (
-            f"gpu_limit must be set to a value between 1 and {MAX_GPU}, not {gpu_limit}"
-        )
-        assert 0 < gpu_limit <= MAX_GPU, (
-            f"gpu_limit must be between 1 and {MAX_GPU}, got {gpu_limit}"
+        assert gpu_limit is not None, "gpu_limit must be specified"
+        assert 0 <= gpu_limit <= MAX_GPU, (
+            f"gpu_limit must be between 0 and {MAX_GPU}, got {gpu_limit}"
         )
 
         self.name = name
@@ -245,8 +247,12 @@ class KubernetesJob:
         self.gpu_type = gpu_type
         self.gpu_product = gpu_product
 
-        self.cpu_request = cpu_request if cpu_request else 12 * gpu_limit
-        self.ram_request = ram_request if ram_request else f"{80 * gpu_limit}G"
+        self.cpu_request = (
+            cpu_request if cpu_request else (12 * gpu_limit if gpu_limit > 0 else 1)
+        )
+        self.ram_request = (
+            ram_request if ram_request else f"{80 * gpu_limit if gpu_limit > 0 else 8}G"
+        )
         assert int(self.cpu_request) <= MAX_CPU, (
             f"cpu_request must be less than {MAX_CPU}"
         )
@@ -402,9 +408,6 @@ class KubernetesJob:
             container["resources"]["requests"]["memory"] = self.ram_request
             container["resources"]["limits"]["memory"] = self.ram_request
 
-        if self.gpu_type is not None and self.gpu_limit is not None:
-            container["resources"]["limits"][f"{self.gpu_type}"] = self.gpu_limit
-
         job = {
             "apiVersion": "batch/v1",
             "kind": "Job",
@@ -429,15 +432,19 @@ class KubernetesJob:
             },
         }
 
-        if self.namespace:
-            job["metadata"]["namespace"] = self.namespace
-
-        if not (
-            self.gpu_type is None or self.gpu_limit is None or self.gpu_product is None
+        # Only add GPU configuration if gpu_limit > 0
+        if self.gpu_limit > 0 and not (
+            self.gpu_type is None or self.gpu_product is None
         ):
             job["spec"]["template"]["spec"]["nodeSelector"] = {
                 f"{self.gpu_type}.product": self.gpu_product
             }
+            job["spec"]["template"]["spec"]["containers"][0]["resources"]["limits"][
+                f"{self.gpu_type}"
+            ] = self.gpu_limit
+
+        if self.namespace:
+            job["metadata"]["namespace"] = self.namespace
 
         job["spec"]["template"]["spec"]["volumes"] = self.volumes
         return yaml.dump(job)
@@ -765,10 +772,10 @@ def launch(
     ),  # Made optional
     cpu_request: str = typer.Option("1", help="CPU request"),
     ram_request: str = typer.Option("8Gi", help="RAM request"),
-    gpu_limit: int = typer.Option(1, help="GPU limit"),
+    gpu_limit: int = typer.Option(1, help="GPU limit (0 for non-GPU jobs)"),
     gpu_product: GPU_PRODUCTS = typer.Option(
         "NVIDIA-A100-SXM4-40GB",
-        help="GPU product type to use",
+        help="GPU product type to use (ignored for non-GPU jobs)",
         show_choices=True,
         show_default=True,
     ),
@@ -833,11 +840,12 @@ def launch(
     if not interactive and command == "":
         raise typer.BadParameter("--command is required when not in interactive mode")
 
-    # Validate GPU constraints before creating job
-    try:
-        validate_gpu_constraints(gpu_product.value, gpu_limit, priority.value)
-    except ValueError as e:
-        raise typer.BadParameter(str(e))
+    # Validate GPU constraints only if requesting GPUs
+    if gpu_limit > 0:
+        try:
+            validate_gpu_constraints(gpu_product.value, gpu_limit, priority.value)
+        except ValueError as e:
+            raise typer.BadParameter(str(e))
 
     is_completed = check_if_completed(job_name, namespace=namespace)
     if not is_completed:
@@ -938,9 +946,9 @@ def launch(
         cpu_request=cpu_request,
         ram_request=ram_request,
         image=docker_image,
-        gpu_type="nvidia.com/gpu",
+        gpu_type="nvidia.com/gpu" if gpu_limit > 0 else None,
         gpu_limit=gpu_limit,
-        gpu_product=gpu_product.value,
+        gpu_product=gpu_product.value if gpu_limit > 0 else None,
         command=["/bin/bash", "-c", "--"],
         args=[full_cmd],
         env_vars=env_vars_dict,
