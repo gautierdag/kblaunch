@@ -322,15 +322,21 @@ def check_job_events_for_queue(api_instance, job_name: str, namespace: str) -> b
             namespace=namespace,
             field_selector=f"involvedObject.name={job_name}",
         )
-        for event in events.items:
-            # Look specifically for resource quota exceeded events
-            if (
-                event.type == "Warning"
-                and event.reason == "FailedCreate"
-                and "exceeded quota" in event.message
-                and "compute-resources" in event.message
-            ):
-                return True
+        if len(events.items) == 0:
+            return False
+        last_event = events.items[-1]
+
+        # Look specifically for resource quota exceeded events
+        if (
+            last_event.type == "Warning"
+            and last_event.reason == "FailedCreate"
+            and "exceeded quota" in last_event.message
+            and "compute-resources" in last_event.message
+        ):
+            return True
+        # Look for CreatedWorkload reason (also indicates job is queued)
+        if last_event.type == "Normal" and last_event.reason == "CreatedWorkload":
+            return True
 
     except Exception as e:
         logger.debug(f"Error checking events for job {job_name}: {e}")
@@ -418,7 +424,7 @@ def get_queue_data(namespace="informatics") -> pd.DataFrame:
                 ),
                 "priority": wl["spec"]["podSets"][0]["template"]["metadata"][
                     "labels"
-                ].get("kueue.x-k8s.io/priority-class", "default"),
+                ].get("kueue.x-k8s.io/priority-class", "default-workload-priority"),
                 "created": created,
                 "wait_time": (
                     datetime.now(timezone.utc).astimezone() - created
