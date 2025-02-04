@@ -393,14 +393,12 @@ def get_queue_data(namespace="informatics") -> pd.DataFrame:
                 if (
                     job_status.active
                     or job_status.succeeded
-                    or job_status.failed
                     or any(
                         c.type in ["Complete", "Failed"]
                         for c in (job_status.conditions or [])
                     )
                 ):
                     continue
-
                 # Only include jobs that have resource quota exceeded events
                 valid, message = check_job_events_for_queue(
                     core_v1, job_name, namespace
@@ -696,9 +694,14 @@ def print_queue_stats(namespace="informatics", reasons=False):
 
     for idx, row in df.iterrows():
         # Format wait time
-        hours = int(row["wait_time"] // 60)
-        mins = int(row["wait_time"] % 60)
-        wait_str = f"{hours}h {mins}m" if hours > 0 else f"{mins}m"
+        days = int(row["wait_time"] // 1440)
+        if days > 0:
+            hours = int((row["wait_time"] % 1440) // 60)
+            wait_str = f"{days}d {hours}h" if hours > 0 else f"{days}d"
+        else:
+            hours = int(row["wait_time"] // 60)
+            mins = int(row["wait_time"] % 60)
+            wait_str = f"{hours}h {mins}m" if hours > 0 else f"{mins}m"
 
         queue_table.add_row(
             str(idx + 1),
