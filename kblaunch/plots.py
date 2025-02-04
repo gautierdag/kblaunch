@@ -375,9 +375,12 @@ def get_queue_data(namespace="informatics") -> pd.DataFrame:
             # remove last hyphen and everything after it
             job_name = job_name.rsplit("-", 1)[0]
 
-            status = wl["status"]["conditions"][-1]["reason"]
-            if status not in ["Pending", "QuotaReserved", "Admitted"]:
-                continue
+            if "status" in wl:
+                status = wl["status"]["conditions"][-1]["reason"]
+                if status not in ["Pending", "QuotaReserved", "Admitted"]:
+                    continue
+            else:
+                status = "Unknown"
 
             # Check job status
             # Sometimes a workload is admitted but the job is stuck waiting for resources
@@ -435,7 +438,7 @@ def get_queue_data(namespace="informatics") -> pd.DataFrame:
             # Extract resource requests
             requests = resources.get("requests", {})
             # if workload is Admitted then we are interested in the last message of Job and not the workload
-            if status != "Admitted":
+            if status != "Admitted" and status != "Unknown":
                 message = wl["status"]["conditions"][-1]["message"]
 
             record = {
