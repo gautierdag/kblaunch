@@ -328,10 +328,9 @@ def check_job_events_for_queue(api_instance, job_name: str, namespace: str) -> b
 
         # Look specifically for resource quota exceeded events
         if (
-            last_event.type == "Warning"
-            and last_event.reason == "FailedCreate"
-            and "exceeded quota" in last_event.message
-            and "compute-resources" in last_event.message
+            last_event.type == "Warning" and last_event.reason == "FailedCreate"
+            # and "exceeded quota" in last_event.message
+            # and "compute-resources" in last_event.message
         ):
             return True
         # Look for CreatedWorkload reason (also indicates job is queued)
@@ -378,12 +377,18 @@ def get_queue_data(namespace="informatics") -> pd.DataFrame:
             # remove last hyphen and everything after it
             job_name = job_name.rsplit("-", 1)[0]
 
+            status = wl["status"]["conditions"][-1]["reason"]
+            if status not in ["Pending", "QuotaReserved", "Admitted"]:
+                continue
+
             # Check job status
+            # Sometimes a workload is admitted but the job is stuck waiting for resources
+            # or because of invalid configuration
             try:
                 job = batch_v1.read_namespaced_job(name=job_name, namespace=namespace)
                 job_status = job.status
-                # logger.debug(f"Got job status for {job_name}: {job_status}")
-                # Skip if job is actively running or completed/failed
+
+                # # Skip if job is actively running or completed/failed
                 if (
                     job_status.active
                     or job_status.succeeded
@@ -411,20 +416,28 @@ def get_queue_data(namespace="informatics") -> pd.DataFrame:
                 .replace(tzinfo=timezone.utc)
                 .astimezone()
             )
+            try:
+                user = wl["spec"]["podSets"][0]["template"]["metadata"]["labels"].get(
+                    "eidf/user", "unknown"
+                )
+                queue = wl["spec"]["podSets"][0]["template"]["metadata"]["labels"].get(
+                    "kueue.x-k8s.io/queue-name", "unknown"
+                )
+                priority = wl["spec"]["podSets"][0]["template"]["metadata"][
+                    "labels"
+                ].get("kueue.x-k8s.io/priority-class", "default-workload-priority")
+            except KeyError:
+                user = "labels-missing"
+                queue = "labels-missing"
+                priority = "labels-missing"
 
             # Extract resource requests
             requests = resources.get("requests", {})
             record = {
                 "name": job_name,
-                "user": wl["spec"]["podSets"][0]["template"]["metadata"]["labels"].get(
-                    "eidf/user", "unknown"
-                ),
-                "queue": wl["spec"]["podSets"][0]["template"]["metadata"]["labels"].get(
-                    "kueue.x-k8s.io/queue-name", "unknown"
-                ),
-                "priority": wl["spec"]["podSets"][0]["template"]["metadata"][
-                    "labels"
-                ].get("kueue.x-k8s.io/priority-class", "default-workload-priority"),
+                "user": user,
+                "queue": queue,
+                "priority": priority,
                 "created": created,
                 "wait_time": (
                     datetime.now(timezone.utc).astimezone() - created
@@ -659,7 +672,7 @@ def print_queue_stats(namespace="informatics"):
     console = Console()
 
     # Sort by creation time
-    df = df.sort_values("created")
+    df = df.sort_values("created").reset_index(drop=True)
 
     queue_table = Table(title="Queue Statistics", show_footer=True)
     queue_table.add_column("Position", style="cyan", justify="right")
