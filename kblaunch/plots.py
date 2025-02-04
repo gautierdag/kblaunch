@@ -92,7 +92,7 @@ def get_pod_pending_reason(api_instance, pod_name: str, namespace: str) -> str:
             message = last_event.message
         else:
             return "Unknown"
-        # logger.debug(f"Found event for pod {pod_name}: {last_event.reason} - {message}")
+
         if "are available:" in message:
             message = message.split(" are available:")[1]
         if " preemption:" in message:
@@ -314,7 +314,9 @@ def check_job_events_for_errors(api_instance, job_name: str, namespace: str) -> 
     return False
 
 
-def check_job_events_for_queue(api_instance, job_name: str, namespace: str) -> bool:
+def check_job_events_for_queue(
+    api_instance, job_name: str, namespace: str
+) -> tuple[bool, str]:
     """Check if a job is genuinely queued due to resource constraints."""
     try:
         # Get events related to the job
@@ -323,23 +325,19 @@ def check_job_events_for_queue(api_instance, job_name: str, namespace: str) -> b
             field_selector=f"involvedObject.name={job_name}",
         )
         if len(events.items) == 0:
-            return False
+            return False, ""
         last_event = events.items[-1]
 
         # Look specifically for resource quota exceeded events
-        if (
-            last_event.type == "Warning" and last_event.reason == "FailedCreate"
-            # and "exceeded quota" in last_event.message
-            # and "compute-resources" in last_event.message
-        ):
-            return True
+        if last_event.type == "Warning" and last_event.reason == "FailedCreate":
+            return True, last_event.message
         # Look for CreatedWorkload reason (also indicates job is queued)
         if last_event.type == "Normal" and last_event.reason == "CreatedWorkload":
-            return True
+            return True, last_event.message
 
     except Exception as e:
         logger.debug(f"Error checking events for job {job_name}: {e}")
-    return False
+    return False, ""
 
 
 def get_queue_data(namespace="informatics") -> pd.DataFrame:
@@ -401,7 +399,10 @@ def get_queue_data(namespace="informatics") -> pd.DataFrame:
                     continue
 
                 # Only include jobs that have resource quota exceeded events
-                if not check_job_events_for_queue(core_v1, job_name, namespace):
+                valid, message = check_job_events_for_queue(
+                    core_v1, job_name, namespace
+                )
+                if not valid:
                     continue
 
             except Exception as e:
@@ -433,6 +434,10 @@ def get_queue_data(namespace="informatics") -> pd.DataFrame:
 
             # Extract resource requests
             requests = resources.get("requests", {})
+            # if workload is Admitted then we are interested in the last message of Job and not the workload
+            if status != "Admitted":
+                message = wl["status"]["conditions"][-1]["message"]
+
             record = {
                 "name": job_name,
                 "user": user,
@@ -449,6 +454,7 @@ def get_queue_data(namespace="informatics") -> pd.DataFrame:
                 "gpu_type": wl["spec"]["podSets"][0]["template"]["spec"]
                 .get("nodeSelector", {})
                 .get("nvidia.com/gpu.product", "unknown"),
+                "message": message,
             }
             records.append(record)
 
@@ -662,7 +668,7 @@ def print_job_stats(namespace="informatics"):
     console.print(job_table)
 
 
-def print_queue_stats(namespace="informatics"):
+def print_queue_stats(namespace="informatics", reasons=False):
     """Display statistics about queued workloads."""
     df = get_queue_data(namespace=namespace)
     if df.empty:
@@ -710,3 +716,12 @@ def print_queue_stats(namespace="informatics"):
     queue_table.columns[6].footer = str(df["gpus"].sum())
 
     console.print(queue_table)
+
+    # if reasons then print table of Job Names and their messages
+    if reasons:
+        reason_table = Table(title="Queue Reasons", show_footer=False)
+        reason_table.add_column("Job Name", style="cyan")
+        reason_table.add_column("Message", style="yellow")
+        for idx, row in df.iterrows():
+            reason_table.add_row(row["name"], row["message"])
+        console.print(reason_table)

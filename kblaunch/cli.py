@@ -1011,10 +1011,11 @@ def monitor_jobs(
 @monitor_app.command("queue")
 def monitor_queue(
     namespace: str = typer.Option("informatics", help="Kubernetes namespace"),
+    reasons: bool = typer.Option(False, help="Display queued job event messages"),
 ):
     """Display statistics about queued workloads"""
     try:
-        print_queue_stats(namespace=namespace)
+        print_queue_stats(namespace=namespace, reasons=reasons)
     except Exception as e:
         print(f"Error displaying queue stats: {e}")
 
