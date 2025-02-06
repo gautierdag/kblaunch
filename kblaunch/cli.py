@@ -668,7 +668,27 @@ def create_pvc(
 
 @app.command()
 def setup():
-    """Interactive setup for kblaunch configuration."""
+    """
+    # `kblaunch setup`
+
+    Interactive setup wizard for kblaunch configuration.
+    No arguments - all configuration is done through interactive prompts.
+
+    This command walks users through the initial setup process, configuring:
+    - User identity and email
+    - Slack notifications webhook
+    - Persistent Volume Claims (PVC) for storage
+    - Git SSH authentication
+
+    The configuration is stored in ~/.cache/.kblaunch/config.json.
+
+    Configuration includes:
+    - User: Kubernetes username for job ownership
+    - Email: User email for notifications and Git configuration
+    - Slack webhook: URL for job status notifications
+    - PVC: Persistent storage configuration
+    - Git SSH: Authentication for private repositories
+    """
     config = load_config()
 
     # validate user
@@ -807,8 +827,56 @@ def launch(
         None, help="Path to startup script to run in container"
     ),
 ):
-    """Launch a Kubernetes job with the specified configuration."""
+    """
+    # `kblaunch launch`
+    Launch a Kubernetes job with specified configuration.
 
+    This command creates and deploys a Kubernetes job with the given specifications,
+    handling GPU allocation, resource requests, and environment setup.
+
+    Args:
+    * email (str, optional): User email for notifications
+    * job_name (str, required): Name of the Kubernetes job
+    * docker_image (str, default="nvcr.io/nvidia/cuda:12.0.0-devel-ubuntu22.04"): Container image
+    * namespace (str, default="informatics"): Kubernetes namespace
+    * queue_name (str, default="informatics-user-queue"): Kueue queue name
+    * interactive (bool, default=False): Run in interactive mode
+    * command (str, default=""): Command to run in container
+    * cpu_request (str, default="1"): CPU cores request
+    * ram_request (str, default="8Gi"): RAM request
+    * gpu_limit (int, default=1): Number of GPUs
+    * gpu_product (GPU_PRODUCTS, default="NVIDIA-A100-SXM4-40GB"): GPU type
+    * secrets_env_vars (List[str], default=[]): Secret environment variables
+    * local_env_vars (List[str], default=[]): Local environment variables
+    * load_dotenv (bool, default=True): Load .env file
+    * nfs_server (str): NFS server IP
+    * pvc_name (str, optional): PVC name
+    * dry_run (bool, default=False): Print YAML only
+    * priority (PRIORITY, default="default"): Job priority
+    * vscode (bool, default=False): Install VS Code
+    * tunnel (bool, default=False): Start VS Code tunnel
+    * startup_script (str, optional): Path to startup script
+
+    Examples:
+        ```bash
+        # Launch an interactive GPU job
+        kblaunch launch --job-name test-job --interactive
+
+        # Launch a batch GPU job with custom command
+        kblaunch launch --job-name batch-job --command "python train.py"
+
+        # Launch a CPU-only job
+        kblaunch launch --job-name cpu-job --gpu-limit 0
+
+        # Launch with VS Code support
+        kblaunch launch --job-name dev-job --interactive --vscode --tunnel
+        ```
+
+    Notes:
+    - Interactive jobs keep running until manually terminated
+    - GPU jobs require appropriate queue and priority settings
+    - VS Code tunnel requires Slack webhook configuration
+    """
     # Load config
     config = load_config()
 
@@ -979,7 +1047,28 @@ app.add_typer(monitor_app, name="monitor", help="Monitor Kubernetes resources")
 def monitor_gpus(
     namespace: str = typer.Option("informatics", help="Kubernetes namespace"),
 ):
-    """Display overall GPU statistics by type"""
+    """
+    # `kblaunch monitor gpus`
+    Display overall GPU statistics and utilization by type.
+
+    Shows a comprehensive view of GPU allocation and usage across the cluster,
+    including both running and pending GPU requests.
+
+    Args:
+    - namespace: Kubernetes namespace to monitor (default: informatics)
+
+    Output includes:
+    - Total GPU count by type
+    - Running vs. pending GPUs
+    - Details of pending GPU requests
+    - Wait times for pending requests
+
+    Examples:
+        ```bash
+        kblaunch monitor gpus
+        kblaunch monitor gpus --namespace custom-namespace
+        ```
+    """
     try:
         print_gpu_total(namespace=namespace)
     except Exception as e:
@@ -990,7 +1079,28 @@ def monitor_gpus(
 def monitor_users(
     namespace: str = typer.Option("informatics", help="Kubernetes namespace"),
 ):
-    """Display GPU usage statistics by user"""
+    """
+    # `kblaunch monitor users`
+    Display GPU usage statistics grouped by user.
+
+    Provides a user-centric view of GPU allocation and utilization,
+    helping identify resource usage patterns across users.
+
+    Args:
+    - namespace: Kubernetes namespace to monitor (default: informatics)
+
+    Output includes:
+    - GPUs allocated per user
+    - Average memory usage per user
+    - Inactive GPU count per user
+    - Overall usage totals
+
+    Examples:
+        ```bash
+        kblaunch monitor users
+        kblaunch monitor users --namespace custom-namespace
+        ```
+    """
     try:
         print_user_stats(namespace=namespace)
     except Exception as e:
@@ -1001,7 +1111,30 @@ def monitor_users(
 def monitor_jobs(
     namespace: str = typer.Option("informatics", help="Kubernetes namespace"),
 ):
-    """Display detailed job-level statistics"""
+    """
+    # `kblaunch monitor jobs`
+    Display detailed job-level GPU statistics.
+
+    Shows comprehensive information about all running GPU jobs,
+    including resource usage and job characteristics.
+
+    Args:
+    - namespace: Kubernetes namespace to monitor (default: informatics)
+
+    Output includes:
+    - Job identification and ownership
+    - Resource allocation (CPU, RAM, GPU)
+    - GPU memory usage
+    - Job status (active/inactive)
+    - Job mode (interactive/batch)
+    - Resource totals and averages
+
+    Examples:
+        ```bash
+        kblaunch monitor jobs
+        kblaunch monitor jobs --namespace custom-namespace
+        ```
+    """
     try:
         print_job_stats(namespace=namespace)
     except Exception as e:
@@ -1013,7 +1146,30 @@ def monitor_queue(
     namespace: str = typer.Option("informatics", help="Kubernetes namespace"),
     reasons: bool = typer.Option(False, help="Display queued job event messages"),
 ):
-    """Display statistics about queued workloads"""
+    """
+    # `kblaunch monitor queue`
+    Display statistics about queued workloads.
+
+    Shows information about jobs waiting in the Kueue scheduler,
+    including wait times and resource requests.
+
+    Args:
+    - namespace: Kubernetes namespace to monitor (default: informatics)
+    - reasons: Show detailed reason messages for queued jobs
+
+    Output includes:
+    - Queue position and wait time
+    - Resource requests (CPU, RAM, GPU)
+    - Job priority
+    - Queueing reasons (if --reasons flag is used)
+
+    Examples:
+        ```bash
+        kblaunch monitor queue
+        kblaunch monitor queue --reasons
+        kblaunch monitor queue --namespace custom-namespace
+        ```
+    """
     try:
         print_queue_stats(namespace=namespace, reasons=reasons)
     except Exception as e:
@@ -1037,8 +1193,3 @@ def main(
 ):
     """Entry point for the application"""
     pass  # The callback doesn't need to do anything else
-
-
-def cli():
-    """Entry point for the application"""
-    app()

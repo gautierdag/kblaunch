@@ -33,6 +33,11 @@ allow-direct-references = true
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 
+[dependency-groups]
+dev = [
+    "pdoc>=15.0.1",
+]
+
 [project.optional-dependencies]
 test = [
     "pytest>=7.0",

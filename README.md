@@ -4,6 +4,7 @@
 ![Python Version](https://img.shields.io/badge/python-3.9+-blue)
 ![Ruff](https://img.shields.io/badge/linter-ruff-blue)
 [![PyPI Version](https://img.shields.io/pypi/v/kblaunch)](https://pypi.org/project/kblaunch/)
+[![Documentation](https://img.shields.io/badge/docs-pdoc-blue)](https://gautierdag.github.io/kblaunch/)
 
 A CLI tool for launching Kubernetes jobs with environment variable and secret management.
 
@@ -114,6 +115,7 @@ kblaunch launch \
 ## Launch Options
 
 Launch command options:
+
 - `--email`: User email (overrides config)
 - `--job-name`: Name of the Kubernetes job [required]
 - `--docker-image`: Docker image (default: "nvcr.io/nvidia/cuda:12.0.0-devel-ubuntu22.04")
@@ -125,12 +127,12 @@ Launch command options:
 - `--ram-request`: RAM request (default: "8Gi")
 - `--gpu-limit`: GPU limit (default: 1)
 - `--gpu-product`: GPU product type (default: "NVIDIA-A100-SXM4-40GB")
-    - Available options: 
-        - NVIDIA-A100-SXM4-80GB
-        - NVIDIA-A100-SXM4-40GB
-        - NVIDIA-A100-SXM4-40GB-MIG-3g.20gb
-        - NVIDIA-A100-SXM4-40GB-MIG-1g.5gb
-        - NVIDIA-H100-80GB-HBM3
+  - Available options:
+    - NVIDIA-A100-SXM4-80GB
+    - NVIDIA-A100-SXM4-40GB
+    - NVIDIA-A100-SXM4-40GB-MIG-3g.20gb
+    - NVIDIA-A100-SXM4-40GB-MIG-1g.5gb
+    - NVIDIA-H100-80GB-HBM3
 - `--secrets-env-vars`: List of secret environment variables (default: [])
 - `--local-env-vars`: List of local environment variables (default: [])
 - `--load-dotenv`: Load environment variables from .env file (default: True)
@@ -138,20 +140,19 @@ Launch command options:
 - `--pvc-name`: Persistent Volume Claim name
 - `--dry-run`: Print job YAML without creating it (default: False)
 - `--priority`: Priority class name (default: "default")
-    - Available options: default, batch, short
+  - Available options: default, batch, short
 - `--vscode`: Install VS Code CLI in container (default: False)
 - `--tunnel`: Start VS Code SSH tunnel on startup (requires SLACK_WEBHOOK and --vscode)
 - `--startup-script`: Path to startup script to run in container
 
 Monitor command options:
+
 - `--namespace`: Kubernetes namespace (default: "informatics")
-
-
 
 ## Monitoring Commands
 
 The `kblaunch monitor` command provides several subcommands to monitor cluster resources:
-    
+
 Displays aggreate GPU statistics for the cluster:
 
 ```bash
@@ -177,7 +178,6 @@ kblaunch monitor jobs
 ```
 
 Note that `users` and `jobs` commands will run `nvidia-smi` on pods to obtain GPU usage is not recommended for frequent use.
-
 
 ## Features
 
