@@ -1145,6 +1145,7 @@ def monitor_jobs(
 def monitor_queue(
     namespace: str = typer.Option("informatics", help="Kubernetes namespace"),
     reasons: bool = typer.Option(False, help="Display queued job event messages"),
+    include_cpu: bool = typer.Option(False, help="Show CPU jobs in the queue"),
 ):
     """
     # `kblaunch monitor queue`
@@ -1156,6 +1157,7 @@ def monitor_queue(
     Args:
     - namespace: Kubernetes namespace to monitor (default: informatics)
     - reasons: Show detailed reason messages for queued jobs
+    - include-cpu: Include CPU jobs in the queue
 
     Output includes:
     - Queue position and wait time
@@ -1171,7 +1173,7 @@ def monitor_queue(
         ```
     """
     try:
-        print_queue_stats(namespace=namespace, reasons=reasons)
+        print_queue_stats(namespace=namespace, reasons=reasons, include_cpu=include_cpu)
     except Exception as e:
         print(f"Error displaying queue stats: {e}")
 

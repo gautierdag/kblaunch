@@ -325,7 +325,7 @@ def check_job_events_for_queue(
             field_selector=f"involvedObject.name={job_name}",
         )
         if len(events.items) == 0:
-            return False, ""
+            return True, "Waiting for events"
         last_event = events.items[-1]
 
         # Look specifically for resource quota exceeded events
@@ -340,7 +340,7 @@ def check_job_events_for_queue(
     return False, ""
 
 
-def get_queue_data(namespace="informatics") -> pd.DataFrame:
+def get_queue_data(namespace="informatics", include_cpu: bool = False) -> pd.DataFrame:
     """Get data about queued workloads."""
     config.load_kube_config()
     v1 = client.CustomObjectsApi()
@@ -366,7 +366,7 @@ def get_queue_data(namespace="informatics") -> pd.DataFrame:
             )
 
             # Skip workloads that don't request GPUs
-            if gpu_request == 0:
+            if gpu_request == 0 and not include_cpu:
                 continue
 
             # Get job name from workload
@@ -453,6 +453,15 @@ def get_queue_data(namespace="informatics") -> pd.DataFrame:
             if status != "Admitted" and status != "Unknown":
                 message = wl["status"]["conditions"][-1]["message"]
 
+            if gpu_request == 0:
+                gpu_type = "cpu-only"
+            else:
+                gpu_type = (
+                    wl["spec"]["podSets"][0]["template"]["spec"]
+                    .get("nodeSelector", {})
+                    .get("nvidia.com/gpu.product", "unknown")
+                )
+
             record = {
                 "name": job_name,
                 "user": user,
@@ -466,9 +475,7 @@ def get_queue_data(namespace="informatics") -> pd.DataFrame:
                 "cpus": cpu_request,
                 "memory": memory_request,
                 "gpus": gpu_request,
-                "gpu_type": wl["spec"]["podSets"][0]["template"]["spec"]
-                .get("nodeSelector", {})
-                .get("nvidia.com/gpu.product", "unknown"),
+                "gpu_type": gpu_type,
                 "message": message,
             }
             records.append(record)
@@ -683,9 +690,9 @@ def print_job_stats(namespace="informatics"):
     console.print(job_table)
 
 
-def print_queue_stats(namespace="informatics", reasons=False):
+def print_queue_stats(namespace="informatics", reasons=False, include_cpu=False):
     """Display statistics about queued workloads."""
-    df = get_queue_data(namespace=namespace)
+    df = get_queue_data(namespace=namespace, include_cpu=include_cpu)
     if df.empty:
         logger.info("No workloads in queue")
         return
