@@ -10,21 +10,27 @@ A CLI tool for launching Kubernetes jobs with environment variable and secret ma
 
 ## Installation
 
-```bash
-pip install kblaunch
-```
+### Using uv (recommended)
 
-Or using `uv`:
+1. Install [uv](https://docs.astral.sh/uv/getting-started/installation/):
 
 ```bash
-uv add kblaunch
+curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
 
-You can even use `uvx` to use the cli without installing it:
+Alternatively, you can install `uv` using pip:
+
+```bash
+pip install uv
+```
+
+2. Use `uvx` to use the cli (the `uvx` command invokes a tool without installing it to the local .venv):
 
 ```bash
 uvx kblaunch --help
 ```
+
+When using the `kblaunch` command always prepend with `uvx` command.
 
 ## Usage
 
@@ -43,6 +49,20 @@ This will go through the following steps:
 3. Set up Slack notifications (optional): This will send a test message to the webhook, and setup the webhook in the config. When your job starts you will receive a message at the webhook
 4. Set up a PVC (optional): This will create a PVC for the user to use in their jobs
 5. Set the default PVC to use (optional): Note only one pod can use the PVC at a time
+
+The outcome of `kblaunch setup` is a `.json` file stored in `.cache/.kblaunch/config.json. It should look something like this:
+
+```json
+{
+  "email": "XXX@ed.ac.uk",
+  "user": "sXXX-infk8s",
+  "slack_webhook": "https://hooks.slack.com/services/XXX/XXX/XXX",
+  "default_pvc": "sXXX-infk8s-pvc",
+  "git_secret": "sXXX-infk8s-git-ssh"
+}
+```
+
+When you later use `kblaunch` to launch a job, it will use the values stored in that `config.json.`
 
 ### Basic Usage
 
