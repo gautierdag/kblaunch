@@ -39,17 +39,17 @@ When using the `kblaunch` command always prepend with `uvx` command.
 Run the setup command to configure the tool (email and slack webhook):
 
 ```bash
-kblaunch setup
+uvx kblaunch setup
 ```
 
 This will go through the following steps:
 
 1. Set the user (optional): This is used to identify the user and required by the cluster. The default is set to $USER.
 2. Set the email (required): This is used to identify the user and required by the cluster.
-3. Set up Slack notifications (optional): This will send a test message to the webhook, and setup the webhook in the config. When your job starts you will receive a message at the webhook
+3. Set up Slack notifications (optional): This will send a test message to the webhook, and setup the webhook in the config. When your job starts you will receive a message at the webhook. Note a slack webhook is also required for automatic vscode tunnelling. 
 4. Set up a PVC (optional): This will create a PVC for the user to use in their jobs.
 5. Set the default PVC to use (optional): Note only one pod can use the PVC at a time. The default pvc will be passed to the job. The pvc will always be mounted at `/pvc`.
-6. Set up a git secret (optional): If the user has set up a git/rsa key on the head node. We can export it as a secret for them and automatically load it and setup git credentials in their launched pods. This requires having setup git/rsa credentials before hand.
+6. Set up git credentials (optional): If the user has set up a git/rsa key on the head node. We can export it as a secret for them and automatically load it and setup git credentials in their launched pods. This requires having setup git/rsa credentials before hand.
 
 The outcome of `kblaunch setup` is a `.json` file stored in `.cache/.kblaunch/config.json. It should look something like this:
 
@@ -70,7 +70,7 @@ When you later use `kblaunch` to launch a job, it will use the values stored in 
 Launch a simple job:
 
 ```bash
-kblaunch launch
+uvx kblaunch launch
     --job-name myjob \
     --command "python script.py"
 ```
@@ -92,7 +92,7 @@ kblaunch launch
 2. From Kubernetes secrets:
 
     ```bash
-    kblaunch launch \
+    uvx kblaunch launch \
         --job-name myjob \
         --command "python script.py" \
         --secrets-env-vars mysecret1,mysecret2
@@ -101,7 +101,7 @@ kblaunch launch
 3. From .env file (default behavior):
 
     ```bash
-    kblaunch launch \
+    uvx kblaunch launch \
         --job-name myjob \
         --command "python script.py" \
         --load-dotenv
@@ -114,7 +114,7 @@ kblaunch launch
 Specify GPU requirements:
 
 ```bash
-kblaunch launch \
+uvx kblaunch launch \
     --job-name gpu-job \
     --command "python train.py" \
     --gpu-limit 2 \
@@ -126,7 +126,7 @@ kblaunch launch \
 Launch an interactive job:
 
 ```bash
-kblaunch launch \
+uvx kblaunch launch \
     --job-name interactive \
     --interactive
 ```
@@ -155,13 +155,13 @@ Launch command options:
 - `--secrets-env-vars`: List of secret environment variables (default: [])
 - `--local-env-vars`: List of local environment variables (default: [])
 - `--load-dotenv`: Load environment variables from .env file (default: True)
-- `--nfs-server`: NFS server address
-- `--pvc-name`: Persistent Volume Claim name
+- `--nfs-server`: NFS server address (default: set to environment variable $INFK8S_NFS_SERVER_IP)
+- `--pvc-name`: Persistent Volume Claim name (default: `default_pvc` if present in `config.json`)
 - `--dry-run`: Print job YAML without creating it (default: False)
 - `--priority`: Priority class name (default: "default")
-  - Available options: default, batch, short
+  - Available options: `default`, `batch`, `short`
 - `--vscode`: Install VS Code CLI in container (default: False)
-- `--tunnel`: Start VS Code SSH tunnel on startup (requires SLACK_WEBHOOK and --vscode)
+- `--tunnel`: Start VS Code SSH tunnel on startup (requires `$SLACK_WEBHOOK` and --vscode flag)
 - `--startup-script`: Path to startup script to run in container
 
 Monitor command options:
@@ -175,25 +175,25 @@ The `kblaunch monitor` command provides several subcommands to monitor cluster r
 Displays aggreate GPU statistics for the cluster:
 
 ```bash
-kblaunch monitor gpus
+uvx kblaunch monitor gpus
 ```
 
 Displays queued jobs (jobs which are waiting for GPUs):
 
 ```bash
-kblaunch monitor queue
+uvx kblaunch monitor queue
 ```
 
 Displays per-user statistics:
 
 ```bash
-kblaunch monitor users
+uvx kblaunch monitor users
 ```
 
 Displays per-job statistics:
 
 ```bash
-kblaunch monitor jobs
+uvx kblaunch monitor jobs
 ```
 
 Note that `users` and `jobs` commands will run `nvidia-smi` on pods to obtain GPU usage is not recommended for frequent use.
