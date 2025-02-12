@@ -47,8 +47,9 @@ This will go through the following steps:
 1. Set the user (optional): This is used to identify the user and required by the cluster. The default is set to $USER.
 2. Set the email (required): This is used to identify the user and required by the cluster.
 3. Set up Slack notifications (optional): This will send a test message to the webhook, and setup the webhook in the config. When your job starts you will receive a message at the webhook
-4. Set up a PVC (optional): This will create a PVC for the user to use in their jobs
-5. Set the default PVC to use (optional): Note only one pod can use the PVC at a time
+4. Set up a PVC (optional): This will create a PVC for the user to use in their jobs.
+5. Set the default PVC to use (optional): Note only one pod can use the PVC at a time. The default pvc will be passed to the job. The pvc will always be mounted at `/pvc`.
+6. Set up a git secret (optional): If the user has set up a git/rsa key on the head node. We can export it as a secret for them and automatically load it and setup git credentials in their launched pods. This requires having setup git/rsa credentials before hand.
 
 The outcome of `kblaunch setup` is a `.json` file stored in `.cache/.kblaunch/config.json. It should look something like this:
 
@@ -85,8 +86,7 @@ kblaunch launch
     kblaunch launch \
         --job-name myjob \
         --command "python script.py" \
-        --local-env-vars PATH \
-        --local-env-vars OPENAI_API_KEY
+        --local-env-vars PATH,OPENAI_API_KEY
     ```
 
 2. From Kubernetes secrets:
@@ -95,8 +95,7 @@ kblaunch launch
     kblaunch launch \
         --job-name myjob \
         --command "python script.py" \
-        --secrets-env-vars mysecret1 \
-        --secrets-env-vars mysecret2
+        --secrets-env-vars mysecret1,mysecret2
     ```
 
 3. From .env file (default behavior):
