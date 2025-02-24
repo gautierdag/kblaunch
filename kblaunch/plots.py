@@ -406,6 +406,12 @@ def get_queue_data(namespace="informatics", include_cpu: bool = False) -> pd.Dat
                 if not valid:
                     continue
 
+            except client.rest.ApiException as e:
+                # If job is not found, skip
+                if e.status == 404:
+                    continue
+                logger.debug(f"Error checking job {job_name}: {e}")
+                continue
             except Exception as e:
                 logger.debug(f"Error checking job {job_name}: {e}")
                 continue
