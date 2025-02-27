@@ -400,6 +400,7 @@ def test_setup_command(mock_post, mock_check_pvc, mock_save):
     # Mock all the user interactions
     confirm_responses = [
         True,  # Would you like to set the user?
+        True,  # Would you like to configure the NFS server?
         True,  # Would you like to set up Slack notifications?
         True,  # Would you like to use a PVC?
         True,  # Would you like to set as default PVC?
@@ -409,6 +410,7 @@ def test_setup_command(mock_post, mock_check_pvc, mock_save):
     prompt_responses = [
         "user",  # user input
         "test@example.com",  # email input
+        "10.24.1.255",  # NFS server address
         "https://hooks.slack.com/test",  # slack webhook
         "user-pvc",  # PVC name
         "/home/user/.ssh/id_rsa",  # SSH key path
@@ -426,6 +428,7 @@ def test_setup_command(mock_post, mock_check_pvc, mock_save):
             {
                 "user": "user",
                 "email": "test@example.com",
+                "nfs_server": "10.24.1.255",  # Added NFS server
                 "slack_webhook": "https://hooks.slack.com/test",
                 "default_pvc": "user-pvc",
                 "git_secret": "user-git-ssh",

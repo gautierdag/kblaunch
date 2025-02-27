@@ -68,7 +68,8 @@ class PRIORITY(str, Enum):
     short = "short"
 
 
-NFS_SERVER = os.getenv("INFK8S_NFS_SERVER_IP", "10.24.1.255")
+# Get NFS server from environment or use default
+NFS_SERVER = os.getenv("INFK8S_NFS_SERVER_IP", None)
 
 app = typer.Typer()
 
@@ -226,7 +227,7 @@ class KubernetesJob:
         gpu_limit: Optional[int] = None,
         env_vars: Optional[dict] = None,
         secret_env_vars: Optional[dict] = None,
-        nfs_server: str = NFS_SERVER,
+        nfs_server: Optional[str] = None,
         pvc_name: Optional[str] = None,
         user_name: Optional[str] = None,
         user_email: Optional[str] = None,
@@ -269,16 +270,22 @@ class KubernetesJob:
 
         USER = os.getenv("USER", "unknown")
         self.volumes = [
-            {
-                "name": "workspace",
-                "nfs": {"path": f"/user/{USER}", "server": nfs_server},
-            },
-            {
-                "name": "publicdata",
-                "nfs": {"path": "/public", "server": nfs_server},
-            },
             {"name": "dshm", "emptyDir": {"medium": "Memory"}},
         ]
+        if nfs_server is not None:
+            self.volumes.append(
+                {
+                    "name": "workspace",
+                    "nfs": {"path": f"/user/{USER}", "server": nfs_server},
+                }
+            )
+            self.volumes.append(
+                {
+                    "name": "publicdata",
+                    "nfs": {"path": "/public", "server": nfs_server},
+                }
+            )
+
         if pvc_name is not None:
             self.volumes.append(
                 {"name": "writeable", "persistentVolumeClaim": {"claimName": pvc_name}}
@@ -679,6 +686,7 @@ def setup():
     - Slack notifications webhook
     - Persistent Volume Claims (PVC) for storage
     - Git SSH authentication
+    - NFS server configuration
 
     The configuration is stored in ~/.cache/.kblaunch/config.json.
 
@@ -688,6 +696,7 @@ def setup():
     - Slack webhook: URL for job status notifications
     - PVC: Persistent storage configuration
     - Git SSH: Authentication for private repositories
+    - NFS: Server address for mounting storage
     """
     config = load_config()
 
@@ -710,6 +719,16 @@ def setup():
         f"Please enter your email (existing: {existing_email})", default=existing_email
     )
     config["email"] = email
+
+    # Get NFS Server
+    # Get the current NFS server from config or default
+    current_nfs = config.get("nfs_server", NFS_SERVER)
+    if typer.confirm("Would you like to configure the NFS server?", default=False):
+        nfs_server = typer.prompt(
+            f"Enter your NFS server address (existing: {current_nfs})",
+            default=current_nfs,
+        )
+        config["nfs_server"] = nfs_server
 
     # Get Slack webhook
     if typer.confirm("Would you like to set up Slack notifications?", default=False):
@@ -812,7 +831,9 @@ def launch(
     load_dotenv: bool = typer.Option(
         True, help="Load environment variables from .env file"
     ),
-    nfs_server: str = typer.Option(NFS_SERVER, help="NFS server"),
+    nfs_server: Optional[str] = typer.Option(
+        None, help="NFS server (overrides config and environment)"
+    ),
     pvc_name: str = typer.Option(None, help="Persistent Volume Claim name"),
     dry_run: bool = typer.Option(False, help="Dry run"),
     priority: PRIORITY = typer.Option(
@@ -849,7 +870,7 @@ def launch(
     * secrets_env_vars (List[str], default=[]): Secret environment variables
     * local_env_vars (List[str], default=[]): Local environment variables
     * load_dotenv (bool, default=True): Load .env file
-    * nfs_server (str): NFS server IP
+    * nfs_server (str, optional): NFS server IP (overrides config)
     * pvc_name (str, optional): PVC name
     * dry_run (bool, default=False): Print YAML only
     * priority (PRIORITY, default="default"): Job priority
@@ -887,6 +908,15 @@ def launch(
             raise typer.BadParameter(
                 "Email not provided and not found in config. "
                 "Please provide --email or run 'kblaunch setup'"
+            )
+
+    # Determine which NFS server to use (priority: command-line > config > env var > default)
+    if nfs_server is None:
+        nfs_server = config.get("nfs_server", NFS_SERVER)
+        if nfs_server is None:
+            # warn if NFS server is not set
+            logger.warning(
+                "NFS server not set/found. Please provide --nfs-server or run 'kblaunch setup' mount the NFS partition."
             )
 
     # Add SLACK_WEBHOOK to local_env_vars if configured
