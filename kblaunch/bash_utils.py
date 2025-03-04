@@ -51,7 +51,7 @@ def start_vscode_tunnel_command(env_vars: set) -> str:
     # download vscode script from github main branch and run it
     url = "https://raw.githubusercontent.com/gautierdag/kblaunch/refs/heads/main/kblaunch/vscode.sh"
     return (
-        """apt-get update && apt-get install -y curl;"""  # Install the curl command
+        """apt-get update && apt-get install -y curl jq;"""  # Install the curl command
         f"""curl -Lk {url} --output vscode.sh;"""
         """chmod +x vscode.sh;"""
         """./vscode.sh &"""

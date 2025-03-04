@@ -1,7 +1,6 @@
 #!/bin/sh
 
-# install libs
-apt-get update && apt-get install -y curl jq
+#NOTE: Assumes curl and jq are installed
 
 # GitHub OAuth Configuration
 CLIENT_ID="01ab8ac9400c4e429b23"  # Official VS Code client ID
