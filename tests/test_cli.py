@@ -248,7 +248,7 @@ def test_kubernetes_job_init(basic_job):
     assert basic_job.image == "test-image:latest"
     assert basic_job.gpu_limit == 1
     assert basic_job.cpu_request == 12  # Default CPU request for 1 GPU
-    assert basic_job.ram_request == "80G"  # Default RAM request for 1 GPU
+    assert basic_job.ram_request == "80Gi"  # Default RAM request for 1 GPU
 
 
 def test_kubernetes_job_generate_yaml(basic_job):
@@ -764,7 +764,7 @@ def test_launch_cpu_only_job(mock_kubernetes_job, mock_k8s_client):
         assert job_args["gpu_limit"] == 0
         assert job_args["gpu_type"] is None
         assert job_args["gpu_product"] is None
-        assert job_args["cpu_request"] == "1"  # Default CPU for non-GPU jobs
+        assert job_args["cpu_request"] == "6"  # Default CPU for non-GPU jobs
 
 
 runner = CliRunner()

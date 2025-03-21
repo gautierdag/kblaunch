@@ -96,6 +96,20 @@ def validate_gpu_constraints(gpu_product: str, gpu_limit: int, priority: str):
         )
 
 
+def validate_ram_request(ram_request: str) -> bool:
+    """Validate RAM request format (e.g., 8Gi, 16Gi, 32Gi)."""
+    pattern = r"^([0-9]+)(Gi)$"
+    match = re.match(pattern, ram_request)
+    if not match:
+        raise ValueError(
+            "Invalid RAM request format. Must be a number followed by Gi (e.g., 8Gi)"
+        )
+    size = int(match.group(1))
+    if size <= 0 or size > MAX_RAM:
+        raise ValueError(f"RAM request must be between 1 and {MAX_RAM}Gi")
+    return True
+
+
 def delete_namespaced_job_safely(
     job_name: str,
     namespace: str = "informatics",
@@ -254,11 +268,40 @@ class KubernetesJob:
             cpu_request if cpu_request else (12 * gpu_limit if gpu_limit > 0 else 1)
         )
         self.ram_request = (
-            ram_request if ram_request else f"{80 * gpu_limit if gpu_limit > 0 else 8}G"
+            ram_request
+            if ram_request
+            else f"{80 * gpu_limit if gpu_limit > 0 else 8}Gi"
         )
+        # Validate RAM request
+        validate_ram_request(self.ram_request)
+
         assert int(self.cpu_request) <= MAX_CPU, (
             f"cpu_request must be less than {MAX_CPU}"
         )
+
+        if gpu_limit > 0:
+            ram_per_gpu = 80
+            cpu_per_gpu = 12
+            if int(self.cpu_request) < (cpu_per_gpu * gpu_limit) * 0.5:
+                logger.warning(f"Low number of cpus detected ({self.cpu_request}).")
+                logger.warning(
+                    f"Note the recommended CPU request for {gpu_limit} GPUs is {cpu_per_gpu * gpu_limit}."
+                )
+            elif int(self.cpu_request) > (cpu_per_gpu * gpu_limit) * 1.5:
+                logger.warning(f"High number of cpus detected ({self.cpu_request}).")
+                logger.warning(
+                    f"Note the recommended CPU request for {gpu_limit} GPUs is {cpu_per_gpu * gpu_limit}."
+                )
+            if int(self.ram_request.rstrip("Gi")) < (ram_per_gpu * gpu_limit) * 0.5:
+                logger.warning(f"Low amount of RAM detected ({self.ram_request}).")
+                logger.warning(
+                    f"Note the recommended RAM request for {gpu_limit} GPUs is {ram_per_gpu * gpu_limit}Gi."
+                )
+            elif int(self.ram_request.rstrip("Gi")) > (ram_per_gpu * gpu_limit) * 1.5:
+                logger.warning(f"High amount of RAM detected ({self.ram_request}).")
+                logger.warning(
+                    f"Note the recommended RAM request for {gpu_limit} GPUs is {ram_per_gpu * gpu_limit}Gi."
+                )
 
         self.volume_mounts = [
             {"name": "workspace", "mountPath": "/workspace", "readOnly": True},
@@ -676,7 +719,7 @@ def create_pvc(
 @app.command()
 def setup():
     """
-    # `kblaunch setup`
+     `kblaunch setup`
 
     Interactive setup wizard for kblaunch configuration.
     No arguments - all configuration is done through interactive prompts.
@@ -811,8 +854,8 @@ def launch(
     command: str = typer.Option(
         "", help="Command to run in the container"
     ),  # Made optional
-    cpu_request: str = typer.Option("1", help="CPU request"),
-    ram_request: str = typer.Option("8Gi", help="RAM request"),
+    cpu_request: str = typer.Option("6", help="CPU request"),
+    ram_request: str = typer.Option("40Gi", help="RAM request"),
     gpu_limit: int = typer.Option(1, help="GPU limit (0 for non-GPU jobs)"),
     gpu_product: GPU_PRODUCTS = typer.Option(
         "NVIDIA-A100-SXM4-40GB",
@@ -849,7 +892,7 @@ def launch(
     ),
 ):
     """
-    # `kblaunch launch`
+    `kblaunch launch`
     Launch a Kubernetes job with specified configuration.
 
     This command creates and deploys a Kubernetes job with the given specifications,
@@ -863,8 +906,8 @@ def launch(
     * queue_name (str, default="informatics-user-queue"): Kueue queue name
     * interactive (bool, default=False): Run in interactive mode
     * command (str, default=""): Command to run in container
-    * cpu_request (str, default="1"): CPU cores request
-    * ram_request (str, default="8Gi"): RAM request
+    * cpu_request (str, default="6"): CPU cores request
+    * ram_request (str, default="40Gi"): RAM request
     * gpu_limit (int, default=1): Number of GPUs
     * gpu_product (GPU_PRODUCTS, default="NVIDIA-A100-SXM4-40GB"): GPU type
     * secrets_env_vars (List[str], default=[]): Secret environment variables
@@ -1078,7 +1121,7 @@ def monitor_gpus(
     namespace: str = typer.Option("informatics", help="Kubernetes namespace"),
 ):
     """
-    # `kblaunch monitor gpus`
+    `kblaunch monitor gpus`
     Display overall GPU statistics and utilization by type.
 
     Shows a comprehensive view of GPU allocation and usage across the cluster,
@@ -1110,7 +1153,7 @@ def monitor_users(
     namespace: str = typer.Option("informatics", help="Kubernetes namespace"),
 ):
     """
-    # `kblaunch monitor users`
+    `kblaunch monitor users`
     Display GPU usage statistics grouped by user.
 
     Provides a user-centric view of GPU allocation and utilization,
@@ -1142,7 +1185,7 @@ def monitor_jobs(
     namespace: str = typer.Option("informatics", help="Kubernetes namespace"),
 ):
     """
-    # `kblaunch monitor jobs`
+    `kblaunch monitor jobs`
     Display detailed job-level GPU statistics.
 
     Shows comprehensive information about all running GPU jobs,
@@ -1178,7 +1221,7 @@ def monitor_queue(
     include_cpu: bool = typer.Option(False, help="Show CPU jobs in the queue"),
 ):
     """
-    # `kblaunch monitor queue`
+    `kblaunch monitor queue`
     Display statistics about queued workloads.
 
     Shows information about jobs waiting in the Kueue scheduler,
