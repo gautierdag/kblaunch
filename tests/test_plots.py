@@ -1,5 +1,5 @@
 from unittest.mock import MagicMock, patch
-
+import pandas as pd
 import pytest
 
 from kblaunch.plots import (
@@ -9,6 +9,7 @@ from kblaunch.plots import (
     print_gpu_total,
     print_job_stats,
     print_user_stats,
+    print_queue_stats,
 )
 
 
@@ -23,7 +24,7 @@ def mock_k8s_api():
         mock_pod = MagicMock()
         mock_pod.status.phase = "Running"
         mock_pod.metadata.name = "test-pod"
-        mock_pod.metadata.namespace = "informatics"
+        mock_pod.metadata.namespace = "namespace"
         mock_pod.metadata.labels = {"eidf/user": "test-user"}
         mock_pod.spec.node_name = "gpu-node-1"
         mock_pod.spec.node_selector = {
@@ -44,6 +45,12 @@ def mock_k8s_api():
         # Setup API response
         mock_api.return_value.list_namespaced_pod.return_value.items = [mock_pod]
         yield mock_api
+
+
+@pytest.fixture
+def mock_namespace():
+    """Mock namespace for testing"""
+    return "namespace"
 
 
 @pytest.fixture
@@ -90,9 +97,9 @@ def test_get_gpu_metrics_permission_error(mock_k8s_api):
         assert permission_errors["count"] == 1
 
 
-def test_get_data(mock_k8s_api, mock_nvidia_smi):
+def test_get_data(mock_k8s_api, mock_nvidia_smi, mock_namespace):
     """Test data collection for all pods"""
-    df = get_data(load_gpu_metrics=True)
+    df = get_data(namespace=mock_namespace, load_gpu_metrics=True)
 
     assert not df.empty
     assert len(df) == 1  # One GPU pod in our mock
@@ -112,46 +119,46 @@ def mock_console():
         yield mock_instance
 
 
-def test_print_gpu_total(mock_k8s_api, mock_console):
+def test_print_gpu_total(mock_k8s_api, mock_console, mock_namespace):
     """Test GPU total display"""
     # Mock GPU data
     mock_pod = mock_k8s_api.return_value.list_namespaced_pod.return_value.items[0]
     mock_pod.spec.node_selector = {"nvidia.com/gpu.product": "NVIDIA-A100-SXM4-40GB"}
 
-    print_gpu_total()
+    print_gpu_total(namespace=mock_namespace)
 
     # Verify the console.print was called
     assert mock_console.print.call_count > 0
 
 
-def test_print_user_stats(mock_k8s_api, mock_nvidia_smi, mock_console):
+def test_print_user_stats(mock_k8s_api, mock_nvidia_smi, mock_console, mock_namespace):
     """Test user statistics display"""
     # Mock user data
     mock_pod = mock_k8s_api.return_value.list_namespaced_pod.return_value.items[0]
     mock_pod.metadata.labels = {"eidf/user": "test-user"}
 
-    print_user_stats()
+    print_user_stats(namespace=mock_namespace)
 
     # Verify the console.print was called
     assert mock_console.print.call_count > 0
 
 
-def test_print_job_stats(mock_k8s_api, mock_nvidia_smi, mock_console):
+def test_print_job_stats(mock_k8s_api, mock_nvidia_smi, mock_console, mock_namespace):
     """Test job statistics display"""
     # Mock job data
     mock_pod = mock_k8s_api.return_value.list_namespaced_pod.return_value.items[0]
     mock_pod.metadata.name = "test-job"
 
-    print_job_stats()
+    print_job_stats(namespace=mock_namespace)
 
     # Verify the console.print was called
     assert mock_console.print.call_count > 0
 
 
-def test_get_data_empty(mock_k8s_api):
+def test_get_data_empty(mock_k8s_api, mock_namespace):
     """Test data collection with no GPU pods"""
     mock_k8s_api.return_value.list_namespaced_pod.return_value.items = []
-    df = get_data()
+    df = get_data(namespace=mock_namespace)
 
     assert df.empty
     assert list(df.columns) == [
@@ -173,10 +180,39 @@ def test_get_data_empty(mock_k8s_api):
     ]
 
 
-def test_get_data_interactive_pod(mock_k8s_api):
+def test_get_data_interactive_pod(mock_k8s_api, mock_namespace):
     """Test detection of interactive pods"""
     # Modify mock pod to be interactive
     mock_pod = mock_k8s_api.return_value.list_namespaced_pod.return_value.items[0]
     mock_pod.spec.containers[0].command = ["sleep", "infinity"]
-    df = get_data()
+    df = get_data(namespace=mock_namespace)
     assert bool(df.iloc[0]["interactive"]) is True  # Convert numpy bool to Python bool
+
+
+@patch("kblaunch.plots.get_queue_data")
+def test_print_queue_stats(mock_get_queue_data, mock_console, mock_namespace):
+    """Test queue statistics display"""
+    # Mock queue data as a DataFrame instead of a list with correct fields
+    mock_get_queue_data.return_value = pd.DataFrame(
+        [
+            {
+                "name": "test-job",
+                "namespace": mock_namespace,
+                "queue": "user-queue",
+                "priority": "default",
+                "cpus": 6,
+                "memory": "40Gi",
+                "gpus": 1,
+                "gpu_type": "NVIDIA-A100-SXM4-40GB",
+                "created": "2023-01-01T12:00:00Z",  # Using 'created' instead of 'admit_time'
+                "message": "Waiting for resources",
+                "wait_time": 10,  # Adding wait_time_minutes field
+                "user": "test-user",
+            }
+        ]
+    )
+
+    print_queue_stats(namespace=mock_namespace)
+
+    # Verify the console.print was called
+    assert mock_console.print.call_count > 0

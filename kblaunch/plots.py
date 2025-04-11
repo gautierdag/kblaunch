@@ -107,7 +107,7 @@ def get_pod_pending_reason(api_instance, pod_name: str, namespace: str) -> str:
 
 
 def get_data(
-    load_gpu_metrics=False, namespace="informatics", include_pending=False
+    namespace: str, load_gpu_metrics=False, include_pending=False
 ) -> pd.DataFrame:
     """Get live GPU usage data from Kubernetes pods."""
     config.load_kube_config()
@@ -340,7 +340,7 @@ def check_job_events_for_queue(
     return False, ""
 
 
-def get_queue_data(namespace="informatics", include_cpu: bool = False) -> pd.DataFrame:
+def get_queue_data(namespace: str, include_cpu: bool = False) -> pd.DataFrame:
     """Get data about queued workloads."""
     config.load_kube_config()
     v1 = client.CustomObjectsApi()
@@ -497,8 +497,8 @@ def get_queue_data(namespace="informatics", include_cpu: bool = False) -> pd.Dat
         return pd.DataFrame()
 
 
-def print_gpu_total(namespace="informatics"):
-    latest = get_data(load_gpu_metrics=False, namespace=namespace, include_pending=True)
+def print_gpu_total(namespace: str):
+    latest = get_data(namespace=namespace, load_gpu_metrics=False, include_pending=True)
     console = Console()
 
     # Separate running and pending GPUs
@@ -577,8 +577,8 @@ def print_gpu_total(namespace="informatics"):
         console.print(pending_table)
 
 
-def print_user_stats(namespace="informatics"):
-    latest = get_data(load_gpu_metrics=True, namespace=namespace, include_pending=False)
+def print_user_stats(namespace: str):
+    latest = get_data(namespace=namespace, load_gpu_metrics=True, include_pending=False)
     console = Console()
 
     user_stats = (
@@ -617,8 +617,8 @@ def print_user_stats(namespace="informatics"):
     console.print(user_table)
 
 
-def print_job_stats(namespace="informatics"):
-    latest = get_data(load_gpu_metrics=True, namespace=namespace, include_pending=False)
+def print_job_stats(namespace: str):
+    latest = get_data(namespace=namespace, load_gpu_metrics=True, include_pending=False)
     console = Console()
 
     job_stats = (
@@ -696,7 +696,7 @@ def print_job_stats(namespace="informatics"):
     console.print(job_table)
 
 
-def print_queue_stats(namespace="informatics", reasons=False, include_cpu=False):
+def print_queue_stats(namespace: str, reasons=False, include_cpu=False):
     """Display statistics about queued workloads."""
     df = get_queue_data(namespace=namespace, include_cpu=include_cpu)
     if df.empty:

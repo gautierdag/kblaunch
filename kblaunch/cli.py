@@ -2,6 +2,7 @@ import importlib.metadata
 import json
 import os
 import re
+
 from enum import Enum
 from pathlib import Path
 from typing import List, Optional
@@ -54,12 +55,34 @@ def save_config(config: dict):
         json.dump(config, f, indent=2)
 
 
+def get_current_namespace(config: Optional[dict] = None) -> Optional[str]:
+    """Get the current namespace from environment variable only, no subprocess."""
+    if config is None:
+        config = load_config()
+        if "namespace" in config:
+            return config["namespace"]
+    return os.getenv("KUBE_NAMESPACE")
+
+
+def get_user_queue(namespace: Optional[str] = None) -> Optional[str]:
+    """Get the user queue name based on namespace."""
+    # First check if KUBE_USER_QUEUE is set
+    queue = os.getenv("KUBE_USER_QUEUE")
+    if queue:
+        return queue
+    # Otherwise construct from namespace if available
+    if namespace:
+        return f"{namespace}-user-queue"
+    return None
+
+
 class GPU_PRODUCTS(str, Enum):
     a100_80gb = "NVIDIA-A100-SXM4-80GB"
     a100_40gb = "NVIDIA-A100-SXM4-40GB"
     a100_40gb_mig_3g_20gb = "NVIDIA-A100-SXM4-40GB-MIG-3g.20gb"
     a100_40gb_mig_1g_5gb = "NVIDIA-A100-SXM4-40GB-MIG-1g.5gb"
     h100_80gb_hbm3 = "NVIDIA-H100-80GB-HBM3"
+    h200 = "NVIDIA-H200"
 
 
 class PRIORITY(str, Enum):
@@ -112,7 +135,7 @@ def validate_ram_request(ram_request: str) -> bool:
 
 def delete_namespaced_job_safely(
     job_name: str,
-    namespace: str = "informatics",
+    namespace: str,
     user: Optional[str] = None,
 ) -> bool:
     """
@@ -174,7 +197,7 @@ def read_startup_script(script_path: str) -> str:
 def create_git_secret(
     secret_name: str,
     private_key_path: str,
-    namespace: str = "informatics",
+    namespace: str,
 ) -> bool:
     """
     Create a Kubernetes secret containing SSH private key for Git authentication.
@@ -464,7 +487,7 @@ class KubernetesJob:
             "apiVersion": "batch/v1",
             "kind": "Job",
             "metadata": {
-                "name": self.name,
+                "generateName": self.name,
                 "labels": self.labels,  # Add labels here
                 "annotations": self.annotations,  # Add metadata here
             },
@@ -531,7 +554,7 @@ class KubernetesJob:
             return 1
 
 
-def check_if_completed(job_name: str, namespace: str = "informatics") -> bool:
+def check_if_completed(job_name: str, namespace: str) -> bool:
     # Load the kube config
     config.load_kube_config()
 
@@ -589,7 +612,7 @@ def get_env_vars(
 
 def get_secret_env_vars(
     secrets_names: list[str],
-    namespace: str = "informatics",
+    namespace: str,
 ) -> dict[str, str]:
     """
     Get secret environment variables from Kubernetes secrets
@@ -608,7 +631,7 @@ def get_secret_env_vars(
     return secrets_env_vars
 
 
-def check_if_pvc_exists(pvc_name: str, namespace: str = "informatics") -> bool:
+def check_if_pvc_exists(pvc_name: str, namespace: str) -> bool:
     """
     Check if a Persistent Volume Claim (PVC) exists in the specified namespace.
     """
@@ -662,8 +685,8 @@ def create_pvc(
     user: str,
     pvc_name: str,
     storage: str,
-    namespace: str = "informatics",
-    storage_class: str = "csi-rbd-sc",
+    namespace: str,
+    storage_class: str = "csi-cephfs-sc",
 ) -> bool:
     """
     Create a Persistent Volume Claim.
@@ -693,7 +716,7 @@ def create_pvc(
             name=pvc_name, namespace=namespace, labels={"eidf/user": user}
         ),
         spec=client.V1PersistentVolumeClaimSpec(
-            access_modes=["ReadWriteOnce"],
+            access_modes=["ReadWriteMany"],
             resources=client.V1ResourceRequirements(requests={"storage": storage}),
             storage_class_name=storage_class,
         ),
@@ -726,6 +749,7 @@ def setup():
 
     This command walks users through the initial setup process, configuring:
     - User identity and email
+    - Namespace and queue settings
     - Slack notifications webhook
     - Persistent Volume Claims (PVC) for storage
     - Git SSH authentication
@@ -736,6 +760,8 @@ def setup():
     Configuration includes:
     - User: Kubernetes username for job ownership
     - Email: User email for notifications and Git configuration
+    - Namespace: Kubernetes namespace for job deployment
+    - Queue: Kueue queue name for job scheduling
     - Slack webhook: URL for job status notifications
     - PVC: Persistent storage configuration
     - Git SSH: Authentication for private repositories
@@ -762,6 +788,23 @@ def setup():
         f"Please enter your email (existing: {existing_email})", default=existing_email
     )
     config["email"] = email
+
+    # Configure namespace
+    existing_namespace = config.get("namespace", os.getenv("KUBE_NAMESPACE"))
+    if typer.confirm("Would you like to configure your namespace?", default=True):
+        namespace = typer.prompt(
+            f"Please enter your namespace (existing: {existing_namespace})",
+            default=existing_namespace,
+        )
+        config["namespace"] = namespace
+        # Now that we have namespace, ask about queue
+        existing_queue = config.get("queue", get_user_queue(namespace))
+        if typer.confirm("Would you like to configure your queue?", default=True):
+            queue = typer.prompt(
+                f"Please enter your queue name (existing: {existing_queue})",
+                default=existing_queue or f"{namespace}-user-queue",
+            )
+            config["queue"] = queue
 
     # Get NFS Server
     # Get the current NFS server from config or default
@@ -791,7 +834,8 @@ def setup():
             default=current_default,
         )
 
-        if check_if_pvc_exists(pvc_name):
+        namespace = config.get("namespace", get_current_namespace(config))
+        if check_if_pvc_exists(pvc_name, namespace):
             if typer.confirm(
                 f"Would you like to set {pvc_name} as the default PVC?",
                 default=True,
@@ -806,7 +850,7 @@ def setup():
                     "Enter the desired PVC size (e.g. 10Gi)", default="10Gi"
                 )
                 try:
-                    if create_pvc(user, pvc_name, pvc_size):
+                    if create_pvc(user, pvc_name, pvc_size, namespace):
                         config["default_pvc"] = pvc_name
                 except (ValueError, ApiException) as e:
                     logger.error(f"Failed to create PVC: {e}")
@@ -819,7 +863,8 @@ def setup():
             default=default_key_path,
         )
         secret_name = f"{config['user']}-git-ssh"
-        if create_git_secret(secret_name, key_path):
+        namespace = config.get("namespace", get_current_namespace(config))
+        if create_git_secret(secret_name, key_path, namespace):
             config["git_secret"] = secret_name
 
     # validate slack webhook
@@ -848,8 +893,12 @@ def launch(
     docker_image: str = typer.Option(
         "nvcr.io/nvidia/cuda:12.0.0-devel-ubuntu22.04", help="Docker image"
     ),
-    namespace: str = typer.Option("informatics", help="Kubernetes namespace"),
-    queue_name: str = typer.Option("informatics-user-queue", help="Kueue queue name"),
+    namespace: str = typer.Option(
+        None, help="Kubernetes namespace (defaults to KUBE_NAMESPACE)"
+    ),
+    queue_name: str = typer.Option(
+        None, help="Kueue queue name (defaults to KUBE_USER_QUEUE)"
+    ),
     interactive: bool = typer.Option(False, help="Run in interactive mode"),
     command: str = typer.Option(
         "", help="Command to run in the container"
@@ -902,8 +951,8 @@ def launch(
     * email (str, optional): User email for notifications
     * job_name (str, required): Name of the Kubernetes job
     * docker_image (str, default="nvcr.io/nvidia/cuda:12.0.0-devel-ubuntu22.04"): Container image
-    * namespace (str, default="informatics"): Kubernetes namespace
-    * queue_name (str, default="informatics-user-queue"): Kueue queue name
+    * namespace (str, default="KUBE_NAMESPACE"): Kubernetes namespace
+    * queue_name (str, default="KUBE_USER_QUEUE"): Kueue queue name
     * interactive (bool, default=False): Run in interactive mode
     * command (str, default=""): Command to run in container
     * cpu_request (str, default="6"): CPU cores request
@@ -941,8 +990,20 @@ def launch(
     - GPU jobs require appropriate queue and priority settings
     - VS Code tunnel requires Slack webhook configuration
     """
+
     # Load config
     config = load_config()
+
+    # Determine namespace if not provided
+    if namespace is None:
+        namespace = get_current_namespace(config)
+
+    # Determine queue name if not provided
+    if queue_name is None:
+        queue_name = get_user_queue(namespace)
+        raise typer.BadParameter(
+            "Queue name not provided. Please provide --queue-name or run 'kblaunch setup' to configure."
+        )
 
     # Use email from config if not provided
     if email is None:
@@ -1118,7 +1179,9 @@ app.add_typer(monitor_app, name="monitor", help="Monitor Kubernetes resources")
 
 @monitor_app.command("gpus")
 def monitor_gpus(
-    namespace: str = typer.Option("informatics", help="Kubernetes namespace"),
+    namespace: str = typer.Option(
+        None, help="Kubernetes namespace (defaults to KUBE_NAMESPACE)"
+    ),
 ):
     """
     `kblaunch monitor gpus`
@@ -1128,7 +1191,7 @@ def monitor_gpus(
     including both running and pending GPU requests.
 
     Args:
-    - namespace: Kubernetes namespace to monitor (default: informatics)
+    - namespace: Kubernetes namespace to monitor (default: KUBE_NAMESPACE)
 
     Output includes:
     - Total GPU count by type
@@ -1143,6 +1206,7 @@ def monitor_gpus(
         ```
     """
     try:
+        namespace = namespace or get_current_namespace(config)
         print_gpu_total(namespace=namespace)
     except Exception as e:
         print(f"Error displaying GPU stats: {e}")
@@ -1150,7 +1214,9 @@ def monitor_gpus(
 
 @monitor_app.command("users")
 def monitor_users(
-    namespace: str = typer.Option("informatics", help="Kubernetes namespace"),
+    namespace: str = typer.Option(
+        None, help="Kubernetes namespace (defaults to KUBE_NAMESPACE)"
+    ),
 ):
     """
     `kblaunch monitor users`
@@ -1160,7 +1226,7 @@ def monitor_users(
     helping identify resource usage patterns across users.
 
     Args:
-    - namespace: Kubernetes namespace to monitor (default: informatics)
+    - namespace: Kubernetes namespace to monitor (default: KUBE_NAMESPACE)
 
     Output includes:
     - GPUs allocated per user
@@ -1175,6 +1241,7 @@ def monitor_users(
         ```
     """
     try:
+        namespace = namespace or get_current_namespace(config)
         print_user_stats(namespace=namespace)
     except Exception as e:
         print(f"Error displaying user stats: {e}")
@@ -1182,7 +1249,9 @@ def monitor_users(
 
 @monitor_app.command("jobs")
 def monitor_jobs(
-    namespace: str = typer.Option("informatics", help="Kubernetes namespace"),
+    namespace: str = typer.Option(
+        None, help="Kubernetes namespace (defaults to KUBE_NAMESPACE)"
+    ),
 ):
     """
     `kblaunch monitor jobs`
@@ -1192,7 +1261,7 @@ def monitor_jobs(
     including resource usage and job characteristics.
 
     Args:
-    - namespace: Kubernetes namespace to monitor (default: informatics)
+    - namespace: Kubernetes namespace to monitor (default: KUBE_NAMESPACE)
 
     Output includes:
     - Job identification and ownership
@@ -1209,6 +1278,7 @@ def monitor_jobs(
         ```
     """
     try:
+        namespace = namespace or get_current_namespace(config)
         print_job_stats(namespace=namespace)
     except Exception as e:
         print(f"Error displaying job stats: {e}")
@@ -1216,7 +1286,9 @@ def monitor_jobs(
 
 @monitor_app.command("queue")
 def monitor_queue(
-    namespace: str = typer.Option("informatics", help="Kubernetes namespace"),
+    namespace: str = typer.Option(
+        None, help="Kubernetes namespace (defaults to KUBE_NAMESPACE)"
+    ),
     reasons: bool = typer.Option(False, help="Display queued job event messages"),
     include_cpu: bool = typer.Option(False, help="Show CPU jobs in the queue"),
 ):
@@ -1228,7 +1300,7 @@ def monitor_queue(
     including wait times and resource requests.
 
     Args:
-    - namespace: Kubernetes namespace to monitor (default: informatics)
+    - namespace: Kubernetes namespace to monitor (default: KUBE_NAMESPACE)
     - reasons: Show detailed reason messages for queued jobs
     - include-cpu: Include CPU jobs in the queue
 
@@ -1246,6 +1318,7 @@ def monitor_queue(
         ```
     """
     try:
+        namespace = namespace or get_current_namespace(config)
         print_queue_stats(namespace=namespace, reasons=reasons, include_cpu=include_cpu)
     except Exception as e:
         print(f"Error displaying queue stats: {e}")

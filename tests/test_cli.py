@@ -20,6 +20,8 @@ from kblaunch.cli import (
     send_message_command,
     setup_git_command,
     validate_gpu_constraints,
+    get_current_namespace,
+    get_user_queue,
 )
 
 
@@ -49,6 +51,7 @@ def mock_env_vars(monkeypatch):
     test_vars = {
         "TEST_VAR": "test_value",
         "PYTHONPATH": "/test/path",
+        "KUBE_NAMESPACE": "test-namespace",
     }
     for key, value in test_vars.items():
         monkeypatch.setenv(key, value)
@@ -75,6 +78,7 @@ def test_check_if_completed(mock_k8s_client):
 
     # Mock job list response
     job_name = "test-job"
+    namespace = "test-namespace"
     mock_job = client.V1Job(
         metadata=client.V1ObjectMeta(name=job_name),
         status=client.V1JobStatus(
@@ -86,7 +90,7 @@ def test_check_if_completed(mock_k8s_client):
     batch_api.list_namespaced_job.return_value.items = [mock_job]
     batch_api.read_namespaced_job.return_value = mock_job
 
-    result = check_if_completed(job_name)
+    result = check_if_completed(job_name, namespace)
     assert result is True
     batch_api.delete_namespaced_job.assert_called_once()
 
@@ -114,15 +118,35 @@ def test_send_message_command():
     assert "$SLACK_WEBHOOK" in result
 
 
+@pytest.fixture
+def mock_namespace():
+    with patch("kblaunch.cli.get_current_namespace") as mock_func:
+        mock_func.return_value = "test-namespace"
+        yield mock_func
+
+
+@pytest.fixture
+def mock_queue():
+    with patch("kblaunch.cli.get_user_queue") as mock_func:
+        mock_func.return_value = "test-namespace-user-queue"
+        yield mock_func
+
+
 @pytest.mark.parametrize("interactive", [True, False])
-def test_launch_command(mock_kubernetes_job, mock_k8s_client, interactive):
+def test_launch_command(
+    mock_kubernetes_job, mock_k8s_client, mock_namespace, mock_queue, interactive
+):
     """Test launch command with different configurations."""
     # Mock job completion check
     batch_api = mock_k8s_client["batch_api"]
     batch_api.list_namespaced_job.return_value.items = []
 
     # Mock config loading
-    mock_config = {"email": "test@example.com"}
+    mock_config = {
+        "email": "test@example.com",
+        "namespace": "test-namespace",
+        "queue": "test-namespace-user-queue",
+    }
     with patch("kblaunch.cli.load_config", return_value=mock_config):
         # Prepare arguments
         args = ["launch"]
@@ -134,6 +158,8 @@ def test_launch_command(mock_kubernetes_job, mock_k8s_client, interactive):
                 "test-job",
                 "--command",
                 "python test.py",
+                "--queue-name",
+                "test-namespace-user-queue",
             ]
         )
 
@@ -151,14 +177,20 @@ def test_launch_command(mock_kubernetes_job, mock_k8s_client, interactive):
             assert "python test.py" in call_args["args"][0]
 
 
-def test_launch_with_env_vars(mock_kubernetes_job, mock_k8s_client):
+def test_launch_with_env_vars(
+    mock_kubernetes_job, mock_k8s_client, mock_namespace, mock_queue
+):
     """Test launch command with environment variables."""
     # Mock job completion check
     batch_api = mock_k8s_client["batch_api"]
     batch_api.list_namespaced_job.return_value.items = []
 
     # Mock config loading
-    mock_config = {"email": "test@example.com"}
+    mock_config = {
+        "email": "test@example.com",
+        "namespace": "test-namespace",
+        "queue": "test-namespace-user-queue",
+    }
     with patch("kblaunch.cli.load_config", return_value=mock_config):
         result = runner.invoke(
             app,
@@ -170,6 +202,8 @@ def test_launch_with_env_vars(mock_kubernetes_job, mock_k8s_client):
                 "python test.py",
                 "--local-env-vars",
                 "TEST_VAR",
+                "--queue-name",
+                "test-namespace-user-queue",
             ],
         )
 
@@ -177,14 +211,20 @@ def test_launch_with_env_vars(mock_kubernetes_job, mock_k8s_client):
     mock_kubernetes_job.assert_called_once()
 
 
-def test_launch_with_vscode(mock_kubernetes_job, mock_k8s_client):
+def test_launch_with_vscode(
+    mock_kubernetes_job, mock_k8s_client, mock_namespace, mock_queue
+):
     """Test launch command with VS Code installation."""
     # Mock job completion check
     batch_api = mock_k8s_client["batch_api"]
     batch_api.list_namespaced_job.return_value.items = []
 
     # Mock config loading
-    mock_config = {"email": "test@example.com"}
+    mock_config = {
+        "email": "test@example.com",
+        "namespace": "test-namespace",
+        "queue": "test-namespace-user-queue",
+    }
     with patch("kblaunch.cli.load_config", return_value=mock_config):
         result = runner.invoke(
             app,
@@ -195,6 +235,8 @@ def test_launch_with_vscode(mock_kubernetes_job, mock_k8s_client):
                 "--command",
                 "python test.py",
                 "--vscode",
+                "--queue-name",
+                "test-namespace-user-queue",
             ],
         )
 
@@ -256,7 +298,7 @@ def test_kubernetes_job_generate_yaml(basic_job):
     job_dict = yaml.safe_load(yaml_output)
 
     assert job_dict["kind"] == "Job"
-    assert job_dict["metadata"]["name"] == "test-job"
+    assert job_dict["metadata"]["generateName"] == "test-job"
     assert (
         job_dict["spec"]["template"]["spec"]["containers"][0]["image"]
         == "test-image:latest"
@@ -284,7 +326,7 @@ def test_kubernetes_job_run(mock_batch_api, mock_k8s_config, basic_job):
     assert call_args[1]["namespace"] == "default"  # or your expected namespace
     job_dict = call_args[1]["body"]
     assert job_dict["kind"] == "Job"
-    assert job_dict["metadata"]["name"] == "test-job"
+    assert job_dict["metadata"]["generateName"] == "test-job"
 
     # Verify return code
     assert result == 0
@@ -400,6 +442,8 @@ def test_setup_command(mock_post, mock_check_pvc, mock_save):
     # Mock all the user interactions
     confirm_responses = [
         True,  # Would you like to set the user?
+        True,  # Would you like to configure your namespace?
+        True,  # Would you like to configure your queue?
         True,  # Would you like to configure the NFS server?
         True,  # Would you like to set up Slack notifications?
         True,  # Would you like to use a PVC?
@@ -410,6 +454,8 @@ def test_setup_command(mock_post, mock_check_pvc, mock_save):
     prompt_responses = [
         "user",  # user input
         "test@example.com",  # email input
+        "test-namespace",  # namespace input
+        "test-namespace-user-queue",  # queue input
         "10.24.1.255",  # NFS server address
         "https://hooks.slack.com/test",  # slack webhook
         "user-pvc",  # PVC name
@@ -420,6 +466,8 @@ def test_setup_command(mock_post, mock_check_pvc, mock_save):
         patch("typer.confirm", side_effect=confirm_responses),
         patch("typer.prompt", side_effect=prompt_responses),
         patch("kblaunch.cli.create_git_secret", return_value=True),
+        patch("kblaunch.cli.get_current_namespace", return_value="test-namespace"),
+        patch("kblaunch.cli.get_user_queue", return_value="test-namespace-user-queue"),
     ):
         result = runner.invoke(app, ["setup"])
 
@@ -428,6 +476,8 @@ def test_setup_command(mock_post, mock_check_pvc, mock_save):
             {
                 "user": "user",
                 "email": "test@example.com",
+                "namespace": "test-namespace",
+                "queue": "test-namespace-user-queue",
                 "nfs_server": "10.24.1.255",  # Added NFS server
                 "slack_webhook": "https://hooks.slack.com/test",
                 "default_pvc": "user-pvc",
@@ -484,7 +534,9 @@ def test_read_startup_script(tmp_path):
         read_startup_script(str(dir_path))
 
 
-def test_launch_with_startup_script(mock_kubernetes_job, mock_k8s_client, tmp_path):
+def test_launch_with_startup_script(
+    mock_kubernetes_job, mock_k8s_client, tmp_path, mock_namespace, mock_queue
+):
     """Test launch command with startup script."""
     # Create a temporary script file
     script_path = tmp_path / "startup.sh"
@@ -500,7 +552,11 @@ def test_launch_with_startup_script(mock_kubernetes_job, mock_k8s_client, tmp_pa
     core_api.create_namespaced_config_map.return_value = MagicMock()
 
     # Mock config loading
-    mock_config = {"email": "test@example.com"}
+    mock_config = {
+        "email": "test@example.com",
+        "namespace": "test-namespace",
+        "queue": "test-namespace-user-queue",
+    }
     with patch("kblaunch.cli.load_config", return_value=mock_config):
         result = runner.invoke(
             app,
@@ -512,6 +568,8 @@ def test_launch_with_startup_script(mock_kubernetes_job, mock_k8s_client, tmp_pa
                 "python test.py",
                 "--startup-script",
                 str(script_path),
+                "--queue-name",
+                "test-namespace-user-queue",
             ],
         )
 
@@ -525,7 +583,7 @@ def test_launch_with_startup_script(mock_kubernetes_job, mock_k8s_client, tmp_pa
 
 
 def test_launch_with_startup_script_update(
-    mock_kubernetes_job, mock_k8s_client, tmp_path
+    mock_kubernetes_job, mock_k8s_client, tmp_path, mock_namespace, mock_queue
 ):
     """Test launch command when ConfigMap already exists."""
     # Create a temporary script file
@@ -542,7 +600,11 @@ def test_launch_with_startup_script_update(
     core_api.create_namespaced_config_map.side_effect = ApiException(status=409)
 
     # Mock config loading
-    mock_config = {"email": "test@example.com"}
+    mock_config = {
+        "email": "test@example.com",
+        "namespace": "test-namespace",
+        "queue": "test-namespace-user-queue",
+    }
     with patch("kblaunch.cli.load_config", return_value=mock_config):
         result = runner.invoke(
             app,
@@ -554,6 +616,8 @@ def test_launch_with_startup_script_update(
                 "python test.py",
                 "--startup-script",
                 str(script_path),
+                "--queue-name",
+                "test-namespace-user-queue",
             ],
         )
 
@@ -694,7 +758,9 @@ def test_kubernetes_job_with_git(basic_job):
     assert git_volume["secret"]["defaultMode"] == 0o600
 
 
-def test_launch_with_git_config(mock_kubernetes_job, mock_k8s_client):
+def test_launch_with_git_config(
+    mock_kubernetes_job, mock_k8s_client, mock_namespace, mock_queue
+):
     """Test launch command with Git configuration."""
     # Setup mock instance
     mock_job_instance = mock_kubernetes_job.return_value
@@ -710,6 +776,8 @@ def test_launch_with_git_config(mock_kubernetes_job, mock_k8s_client):
         "user": "test-user",
         "email": "test@example.com",
         "git_secret": "test-git-secret",
+        "namespace": "test-namespace",
+        "queue": "test-namespace-user-queue",
     }
 
     with patch("kblaunch.cli.load_config", return_value=mock_config):
@@ -721,6 +789,8 @@ def test_launch_with_git_config(mock_kubernetes_job, mock_k8s_client):
                 "test-job",
                 "--command",
                 "python test.py",
+                "--queue-name",
+                "test-namespace-user-queue",
             ],
         )
 
@@ -734,14 +804,20 @@ def test_launch_with_git_config(mock_kubernetes_job, mock_k8s_client):
     assert job_args["env_vars"]["GIT_EMAIL"] == "test@example.com"
 
 
-def test_launch_cpu_only_job(mock_kubernetes_job, mock_k8s_client):
+def test_launch_cpu_only_job(
+    mock_kubernetes_job, mock_k8s_client, mock_namespace, mock_queue
+):
     """Test launching a CPU-only job."""
     # Mock job completion check
     batch_api = mock_k8s_client["batch_api"]
     batch_api.list_namespaced_job.return_value.items = []
 
     # Mock config loading
-    mock_config = {"email": "test@example.com"}
+    mock_config = {
+        "email": "test@example.com",
+        "namespace": "test-namespace",
+        "queue": "test-namespace-user-queue",
+    }
     with patch("kblaunch.cli.load_config", return_value=mock_config):
         result = runner.invoke(
             app,
@@ -753,6 +829,8 @@ def test_launch_cpu_only_job(mock_kubernetes_job, mock_k8s_client):
                 "python test.py",
                 "--gpu-limit",
                 "0",  # CPU-only job
+                "--queue-name",
+                "test-namespace-user-queue",
             ],
         )
 

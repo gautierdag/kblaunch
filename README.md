@@ -138,8 +138,8 @@ Launch command options:
 - `--email`: User email (overrides config)
 - `--job-name`: Name of the Kubernetes job [required]
 - `--docker-image`: Docker image (default: "nvcr.io/nvidia/cuda:12.0.0-devel-ubuntu22.04")
-- `--namespace`: Kubernetes namespace (default: "informatics")
-- `--queue-name`: Kueue queue name (default: "informatics-user-queue")
+- `--namespace`: Kubernetes namespace (default: $KUBE_NAMESPACE)
+- `--queue-name`: Kueue queue name (default: $KUBE_QUEUE_NAME)
 - `--interactive`: Run in interactive mode (default: False)
 - `--command`: Command to run in the container [required if not interactive]
 - `--cpu-request`: CPU request (default: "1")
@@ -166,7 +166,7 @@ Launch command options:
 
 Monitor command options:
 
-- `--namespace`: Kubernetes namespace (default: "informatics")
+- `--namespace`: Kubernetes namespace (default: $KUBE_NAMESPACE)
 
 ## Monitoring Commands
 
