@@ -266,7 +266,7 @@ class KubernetesJob:
         secret_env_vars: Optional[dict] = None,
         nfs_server: Optional[str] = None,
         pvc_name: Optional[str] = None,
-        pvcs: Optional[List[dict]] = None,  # New parameter for multiple PVCs
+        pvcs: Optional[List[dict]] = None,
         user_name: Optional[str] = None,
         user_email: Optional[str] = None,
         namespace: Optional[str] = None,
@@ -340,6 +340,11 @@ class KubernetesJob:
         # Handle multiple PVCs with customizable mount paths
         self.pvcs = pvcs or []
         for pvc in self.pvcs:
+            # assert that pvcs name is not pvc_name
+            if pvc["name"] == pvc_name:
+                raise ValueError(
+                    f"PVC name '{pvc['name']}' conflicts with the pvc_name parameter. You cannot mount the same PVC twice."
+                )
             self.volume_mounts.append(
                 {"name": f"pvc-{pvc['name']}", "mountPath": pvc["mount_path"]}
             )
@@ -1073,8 +1078,9 @@ def launch(
 
     if pvc_name is not None:
         if not check_if_pvc_exists(pvc_name, namespace):
-            logger.error(f"Provided PVC '{pvc_name}' does not exist")
-            return
+            raise typer.BadParameter(
+                f"PVC '{pvc_name}' does not exist in namespace '{namespace}'"
+            )
 
     # Parse multiple PVCs if provided
     parsed_pvcs = []
@@ -1093,14 +1099,10 @@ def launch(
                     )
                 # Validate that the PVC exists
                 if not check_if_pvc_exists(pvc["name"], namespace):
-                    logger.warning(
+                    raise typer.BadParameter(
                         f"PVC '{pvc['name']}' does not exist in namespace '{namespace}'"
                     )
-                    if not typer.confirm(
-                        f"Continue with PVC '{pvc['name']}' that doesn't exist?",
-                        default=False,
-                    ):
-                        return 1
+
         except json.JSONDecodeError:
             raise typer.BadParameter("Invalid JSON format for pvcs parameter")
 
@@ -1226,7 +1228,7 @@ def launch(
         kueue_queue_name=queue_name,
         nfs_server=nfs_server,
         pvc_name=pvc_name,
-        pvcs=parsed_pvcs,  # Pass the parsed PVCs list
+        pvcs=parsed_pvcs,
         priority=priority.value,
         startup_script=script_content,
         git_secret=config.get("git_secret"),
