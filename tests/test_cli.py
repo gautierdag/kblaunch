@@ -20,8 +20,6 @@ from kblaunch.cli import (
     send_message_command,
     setup_git_command,
     validate_gpu_constraints,
-    get_current_namespace,
-    get_user_queue,
 )
 
 
@@ -843,6 +841,145 @@ def test_launch_cpu_only_job(
         assert job_args["gpu_type"] is None
         assert job_args["gpu_product"] is None
         assert job_args["cpu_request"] == "6"  # Default CPU for non-GPU jobs
+
+
+def test_kubernetes_job_with_multiple_pvcs(basic_job):
+    """Test KubernetesJob configuration with multiple PVCs."""
+    # Create a job with multiple PVCs
+    pvcs = [
+        {"name": "data-pvc", "mount_path": "/data"},
+        {"name": "models-pvc", "mount_path": "/models"},
+    ]
+
+    job_with_pvcs = KubernetesJob(
+        name=basic_job.name,
+        image=basic_job.image,
+        kueue_queue_name=basic_job.kueue_queue_name,
+        gpu_limit=basic_job.gpu_limit,
+        gpu_type=basic_job.gpu_type,
+        gpu_product=basic_job.gpu_product,
+        user_email=basic_job.user_email,
+        user_name=basic_job.user_name,
+        pvcs=pvcs,  # Add multiple PVCs
+    )
+
+    yaml_output = job_with_pvcs.generate_yaml()
+    job_dict = yaml.safe_load(yaml_output)
+
+    # Verify PVC volume mounts are present
+    container = job_dict["spec"]["template"]["spec"]["containers"][0]
+    volumes = job_dict["spec"]["template"]["spec"]["volumes"]
+
+    # Check volume mounts
+    mount_paths = [mount["mountPath"] for mount in container["volumeMounts"]]
+    assert "/data" in mount_paths
+    assert "/models" in mount_paths
+
+    # Check volumes
+    pvc_volumes = [vol for vol in volumes if "persistentVolumeClaim" in vol]
+    pvc_names = [vol["persistentVolumeClaim"]["claimName"] for vol in pvc_volumes]
+    assert "data-pvc" in pvc_names
+    assert "models-pvc" in pvc_names
+
+
+def test_launch_with_multiple_pvcs(
+    mock_kubernetes_job, mock_k8s_client, mock_namespace, mock_queue
+):
+    """Test launch command with multiple PVCs."""
+    # Mock job completion check
+    batch_api = mock_k8s_client["batch_api"]
+    batch_api.list_namespaced_job.return_value.items = []
+
+    # Multiple PVCs in JSON format
+    pvcs_json = '[{"name":"data-pvc","mount_path":"/data"},{"name":"models-pvc","mount_path":"/models"}]'
+
+    # Mock PVC check to return True
+    with patch("kblaunch.cli.check_if_pvc_exists", return_value=True):
+        # Mock config loading
+        mock_config = {
+            "email": "test@example.com",
+            "namespace": "test-namespace",
+            "queue": "test-namespace-user-queue",
+        }
+        with patch("kblaunch.cli.load_config", return_value=mock_config):
+            result = runner.invoke(
+                app,
+                [
+                    "launch",
+                    "--job-name",
+                    "test-job",
+                    "--command",
+                    "python test.py",
+                    "--pvcs",
+                    pvcs_json,
+                    "--queue-name",
+                    "test-namespace-user-queue",
+                ],
+            )
+
+            assert result.exit_code == 0
+            mock_kubernetes_job.assert_called_once()
+
+            # Verify job parameters
+            job_args = mock_kubernetes_job.call_args[1]
+            assert len(job_args["pvcs"]) == 2
+            assert job_args["pvcs"][0]["name"] == "data-pvc"
+            assert job_args["pvcs"][0]["mount_path"] == "/data"
+            assert job_args["pvcs"][1]["name"] == "models-pvc"
+            assert job_args["pvcs"][1]["mount_path"] == "/models"
+
+
+def test_create_pvc_command(mock_k8s_client, mock_namespace):
+    """Test create-pvc command."""
+    core_api = mock_k8s_client["core_api"]
+
+    # Mock PVC check - first not existing, then existing
+    core_api.list_namespaced_persistent_volume_claim.return_value.items = []
+
+    # Mock successful PVC creation
+    core_api.create_namespaced_persistent_volume_claim.return_value = MagicMock()
+
+    # Mock config
+    mock_config = {"user": "test-user", "namespace": "test-namespace"}
+
+    # Test case where PVC doesn't exist yet
+    with (
+        patch("kblaunch.cli.load_config", return_value=mock_config),
+        patch("kblaunch.cli.save_config") as mock_save,
+        patch("typer.confirm", return_value=True),
+    ):
+        result = runner.invoke(
+            app,
+            [
+                "create-pvc",
+                "--pvc-name",
+                "test-pvc",
+                "--storage",
+                "20Gi",
+                "--storage-class",
+                "test-storage-class",
+            ],
+        )
+
+        assert result.exit_code == 0
+
+        # Verify PVC creation was called with correct parameters
+        core_api.create_namespaced_persistent_volume_claim.assert_called_once()
+        call_args = core_api.create_namespaced_persistent_volume_claim.call_args
+
+        # Check namespace
+        assert call_args[1]["namespace"] == "test-namespace"
+
+        # Check PVC spec
+        pvc = call_args[1]["body"]
+        assert pvc.metadata.name == "test-pvc"
+        assert pvc.metadata.labels["eidf/user"] == "test-user"
+        assert pvc.spec.resources.requests["storage"] == "20Gi"
+        assert pvc.spec.storage_class_name == "test-storage-class"
+
+        # Verify config was updated to set as default PVC
+        mock_save.assert_called_once()
+        assert mock_save.call_args[0][0]["default_pvc"] == "test-pvc"
 
 
 runner = CliRunner()

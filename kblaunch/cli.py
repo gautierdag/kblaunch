@@ -266,6 +266,7 @@ class KubernetesJob:
         secret_env_vars: Optional[dict] = None,
         nfs_server: Optional[str] = None,
         pvc_name: Optional[str] = None,
+        pvcs: Optional[List[dict]] = None,  # New parameter for multiple PVCs
         user_name: Optional[str] = None,
         user_email: Optional[str] = None,
         namespace: Optional[str] = None,
@@ -331,8 +332,17 @@ class KubernetesJob:
             {"name": "publicdata", "mountPath": "/public", "readOnly": True},
             {"name": "dshm", "mountPath": "/dev/shm"},
         ]
+
+        # Handle the legacy single PVC parameter
         if pvc_name is not None:
             self.volume_mounts.append({"name": "writeable", "mountPath": "/pvc"})
+
+        # Handle multiple PVCs with customizable mount paths
+        self.pvcs = pvcs or []
+        for pvc in self.pvcs:
+            self.volume_mounts.append(
+                {"name": f"pvc-{pvc['name']}", "mountPath": pvc["mount_path"]}
+            )
 
         USER = os.getenv("USER", "unknown")
         self.volumes = [
@@ -352,9 +362,19 @@ class KubernetesJob:
                 }
             )
 
+        # Legacy single PVC support
         if pvc_name is not None:
             self.volumes.append(
                 {"name": "writeable", "persistentVolumeClaim": {"claimName": pvc_name}}
+            )
+
+        # Add multiple PVCs to volumes
+        for pvc in self.pvcs:
+            self.volumes.append(
+                {
+                    "name": f"pvc-{pvc['name']}",
+                    "persistentVolumeClaim": {"claimName": pvc["name"]},
+                }
             )
 
         self.env_vars = env_vars
@@ -927,6 +947,10 @@ def launch(
         None, help="NFS server (overrides config and environment)"
     ),
     pvc_name: str = typer.Option(None, help="Persistent Volume Claim name"),
+    pvcs: str = typer.Option(
+        None,
+        help='Multiple PVCs with mount paths in JSON format (e.g., \'[{"name":"my-pvc","mount_path":"/data"}]\')',
+    ),
     dry_run: bool = typer.Option(False, help="Dry run"),
     priority: PRIORITY = typer.Option(
         "default", help="Priority class name", show_default=True, show_choices=True
@@ -963,7 +987,8 @@ def launch(
     * local_env_vars (List[str], default=[]): Local environment variables
     * load_dotenv (bool, default=True): Load .env file
     * nfs_server (str, optional): NFS server IP (overrides config)
-    * pvc_name (str, optional): PVC name
+    * pvc_name (str, optional): PVC name for single PVC mounting at /pvc
+    * pvcs (str, optional): Multiple PVCs with mount paths in JSON format (used for mounting multiple PVCs)
     * dry_run (bool, default=False): Print YAML only
     * priority (PRIORITY, default="default"): Job priority
     * vscode (bool, default=False): Install VS Code
@@ -983,12 +1008,16 @@ def launch(
 
         # Launch with VS Code support
         kblaunch launch --job-name dev-job --interactive --vscode --tunnel
+
+        # Launch with multiple PVCs
+        kblaunch launch --job-name multi-pvc-job --pvcs '[{"name":"data-pvc","mount_path":"/data"},{"name":"models-pvc","mount_path":"/models"}]'
         ```
 
     Notes:
     - Interactive jobs keep running until manually terminated
     - GPU jobs require appropriate queue and priority settings
     - VS Code tunnel requires Slack webhook configuration
+    - Multiple PVCs can be mounted with custom paths using the --pvcs option
     """
 
     # Load config
@@ -997,13 +1026,20 @@ def launch(
     # Determine namespace if not provided
     if namespace is None:
         namespace = get_current_namespace(config)
+        if namespace is None:
+            raise typer.BadParameter(
+                "Namespace not provided.",
+                "Please provide --namespace or run 'kblaunch setup' to configure.",
+            )
 
     # Determine queue name if not provided
     if queue_name is None:
         queue_name = get_user_queue(namespace)
-        raise typer.BadParameter(
-            "Queue name not provided. Please provide --queue-name or run 'kblaunch setup' to configure."
-        )
+        if queue_name is None:
+            raise typer.BadParameter(
+                "Queue name not provided.",
+                "Please provide --queue-name or run 'kblaunch setup' to configure.",
+            )
 
     # Use email from config if not provided
     if email is None:
@@ -1011,7 +1047,7 @@ def launch(
         if email is None:
             raise typer.BadParameter(
                 "Email not provided and not found in config. "
-                "Please provide --email or run 'kblaunch setup'"
+                "Please provide --email or run 'kblaunch setup' to configure."
             )
 
     # Determine which NFS server to use (priority: command-line > config > env var > default)
@@ -1036,9 +1072,37 @@ def launch(
         pvc_name = config.get("default_pvc")
 
     if pvc_name is not None:
-        if not check_if_pvc_exists(pvc_name):
+        if not check_if_pvc_exists(pvc_name, namespace):
             logger.error(f"Provided PVC '{pvc_name}' does not exist")
             return
+
+    # Parse multiple PVCs if provided
+    parsed_pvcs = []
+    if pvcs:
+        try:
+            parsed_pvcs = json.loads(pvcs)
+            # Validate the format
+            for pvc in parsed_pvcs:
+                if (
+                    not isinstance(pvc, dict)
+                    or "name" not in pvc
+                    or "mount_path" not in pvc
+                ):
+                    raise typer.BadParameter(
+                        "Each PVC entry must be a dictionary with 'name' and 'mount_path' keys"
+                    )
+                # Validate that the PVC exists
+                if not check_if_pvc_exists(pvc["name"], namespace):
+                    logger.warning(
+                        f"PVC '{pvc['name']}' does not exist in namespace '{namespace}'"
+                    )
+                    if not typer.confirm(
+                        f"Continue with PVC '{pvc['name']}' that doesn't exist?",
+                        default=False,
+                    ):
+                        return 1
+        except json.JSONDecodeError:
+            raise typer.BadParameter("Invalid JSON format for pvcs parameter")
 
     # Add validation for command parameter
     if not interactive and command == "":
@@ -1162,6 +1226,7 @@ def launch(
         kueue_queue_name=queue_name,
         nfs_server=nfs_server,
         pvc_name=pvc_name,
+        pvcs=parsed_pvcs,  # Pass the parsed PVCs list
         priority=priority.value,
         startup_script=script_content,
         git_secret=config.get("git_secret"),
@@ -1171,6 +1236,87 @@ def launch(
     # Run the Job on the Kubernetes cluster
     if not dry_run:
         job.run()
+
+
+@app.command(name="create-pvc")
+def create_pvc_command(
+    pvc_name: str = typer.Option(..., help="Name of the PVC to create"),
+    storage: str = typer.Option("10Gi", help="Storage size (e.g., 10Gi, 100Mi, 1Ti)"),
+    namespace: str = typer.Option(
+        None, help="Kubernetes namespace (defaults to configured namespace)"
+    ),
+    storage_class: str = typer.Option(
+        "csi-cephfs-sc", help="Storage class name to use"
+    ),
+):
+    """
+    `kblaunch create-pvc`
+    Simple command to create a new Persistent Volume Claim (PVC).
+
+    Creates a PVC with the specified name, size, and storage class in the
+    specified namespace. The PVC will be labeled with the current user.
+
+    Args:
+    * pvc_name (str, required): Name of the PVC to create
+    * storage (str, default="10Gi"): Storage size (e.g., 10Gi, 100Mi, 1Ti)
+    * namespace (str, optional): Kubernetes namespace
+    * storage_class (str, default="csi-cephfs-sc"): Storage class name
+
+    Examples:
+        ```bash
+        # Create a standard 10Gi PVC
+        kblaunch create-pvc --pvc-name my-data-pvc
+
+        # Create a larger PVC with custom storage
+        kblaunch create-pvc --pvc-name my-big-pvc --storage 50Gi
+
+        # Create PVC in a specific namespace with custom storage class
+        kblaunch create-pvc --pvc-name models-pvc --namespace ml-team --storage-class nfs-sc
+        ```
+    """
+    # Load config
+    config = load_config()
+
+    # Get user from config or environment
+    user = config.get("user", os.getenv("USER", "unknown"))
+
+    # Determine namespace if not provided
+    if namespace is None:
+        namespace = get_current_namespace(config)
+        if namespace is None:
+            raise typer.BadParameter(
+                "Namespace not provided and not found in config. "
+                "Please provide --namespace or run 'kblaunch setup'"
+            )
+
+    # Check if PVC already exists
+    if check_if_pvc_exists(pvc_name, namespace):
+        logger.warning(f"PVC '{pvc_name}' already exists in namespace '{namespace}'")
+        return 0
+
+    # Create the PVC
+    try:
+        logger.info(f"Creating PVC '{pvc_name}' in namespace '{namespace}'")
+        logger.info(f"Storage: {storage}, Storage Class: {storage_class}")
+        if create_pvc(user, pvc_name, storage, namespace, storage_class):
+            logger.info(f"PVC '{pvc_name}' created successfully")
+            # Ask if user wants to set this as the default PVC
+            if typer.confirm(
+                f"Do you want to set '{pvc_name}' as your default PVC?", default=True
+            ):
+                config["default_pvc"] = pvc_name
+                save_config(config)
+                logger.info(f"PVC '{pvc_name}' set as default in config")
+            return 0
+        else:
+            logger.error(f"Failed to create PVC '{pvc_name}'")
+            return 1
+    except ApiException as e:
+        logger.error(f"Kubernetes API error: {e}")
+        return 1
+    except Exception as e:
+        logger.error(f"Unexpected error: {e}")
+        return 1
 
 
 monitor_app = typer.Typer()
@@ -1302,7 +1448,7 @@ def monitor_queue(
     Args:
     - namespace: Kubernetes namespace to monitor (default: KUBE_NAMESPACE)
     - reasons: Show detailed reason messages for queued jobs
-    - include-cpu: Include CPU jobs in the queue
+    - include_cpu: Include CPU jobs in the queue
 
     Output includes:
     - Queue position and wait time
