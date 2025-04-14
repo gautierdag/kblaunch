@@ -618,9 +618,11 @@ def get_env_vars(
 
     if load_dotenv:
         try:
-            from dotenv import load_dotenv
+            from dotenv import load_dotenv as ld_dotenv
 
-            load_dotenv()
+            path = os.path.join(os.getcwd(), ".env")
+            if os.path.exists(path):
+                ld_dotenv(path)
         except Exception as e:
             logger.warning(f"Error loading .env file: {e}")
 
