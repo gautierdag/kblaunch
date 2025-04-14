@@ -172,7 +172,7 @@ Monitor command options:
 
 The `kblaunch monitor` command provides several subcommands to monitor cluster resources:
 
-Displays aggreate GPU statistics for the cluster:
+Displays aggregate GPU statistics for the cluster:
 
 ```bash
 uvx kblaunch monitor gpus
