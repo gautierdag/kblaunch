@@ -652,7 +652,7 @@ def get_secret_env_vars(
                     logger.warning(f"Key {key} already set in env_vars.")
                 secrets_env_vars[key] = secret_name
         except Exception as e:
-            logger.warning(f"Error reading secret {secret_name}: {e}")
+            raise typer.BadParameter(f"Error reading secret {secret_name}: {e}")
     return secrets_env_vars
 
 
