@@ -376,9 +376,19 @@ def get_queue_data(namespace: str, include_cpu: bool = False) -> pd.DataFrame:
             job_name = job_name.rsplit("-", 1)[0]
 
             if "status" in wl:
-                status = wl["status"]["conditions"][-1]["reason"]
-                if status not in ["Pending", "QuotaReserved", "Admitted"]:
-                    continue
+                # Get the conditions from the status
+                conditions = wl["status"].get("conditions", [])
+                if conditions:
+                    last_condition = conditions[-1]
+                    status = last_condition.get("reason", "Unknown")
+                    # Check if workload is deactivated
+                    if status == "Deactivated":
+                        # It's still a valid queued workload, just on hold
+                        status = "Deactivated"
+                    elif status not in ["Pending", "QuotaReserved", "Admitted"]:
+                        continue
+                else:
+                    status = "Unknown"
             else:
                 status = "Unknown"
 
