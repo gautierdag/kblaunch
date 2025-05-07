@@ -91,6 +91,12 @@ class PRIORITY(str, Enum):
     short = "short"
 
 
+PRIORITY_MAPPING = {
+    "default": "default-workload-priority",
+    "batch": "batch-workload-priority",
+    "short": "short-workload-high-priority",
+}
+
 # Get NFS server from environment or use default
 NFS_SERVER = os.getenv("INFK8S_NFS_SERVER_IP", None)
 
@@ -392,7 +398,9 @@ class KubernetesJob:
         self.labels = {
             "eidf/user": self.user_name,
             "kueue.x-k8s.io/queue-name": self.kueue_queue_name,
-            "kueue.x-k8s.io/priority-class": f"{priority}-workload-priority",
+            "kueue.x-k8s.io/priority-class": PRIORITY_MAPPING.get(
+                priority, "default-workload-priority"
+            ),
         }
         self.annotations = {"eidf/user": self.user_name, "eidf/email": self.user_email}
         self.namespace = namespace
