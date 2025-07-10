@@ -112,6 +112,7 @@ def get_data(
     """Get live GPU usage data from Kubernetes pods."""
     config.load_kube_config()
     v1 = client.CoreV1Api()
+    batch_v1 = client.BatchV1Api()
 
     pods = v1.list_namespaced_pod(namespace=namespace)
     records = []
@@ -157,6 +158,17 @@ def get_data(
                 namespace = pod.metadata.namespace
                 pod_name = pod.metadata.name
                 username = pod.metadata.labels.get("eidf/user", "unknown")
+                # fallback to job-name label if user label is not present
+                if username == "unknown":
+                    try:
+                        job_name = pod.metadata.labels["job-name"]
+                        job = batch_v1.read_namespaced_job(
+                            name=job_name, namespace=namespace
+                        )
+                        username = job.metadata.labels.get("eidf/user", "unknown")
+                    except KeyError:
+                        # If job-name label does not exist, fallback to pod metadata
+                        username = "unknown"
 
                 progress.update(
                     collect_task, advance=1, description=f"[cyan]Processing {pod_name}"
