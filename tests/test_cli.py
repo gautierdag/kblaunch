@@ -14,7 +14,6 @@ from kblaunch.cli import (
     check_if_completed,
     create_git_secret,
     get_env_vars,
-    is_mig_gpu,
     load_config,
     read_startup_script,
     send_message_command,
@@ -484,16 +483,6 @@ def test_setup_command(mock_post, mock_check_pvc, mock_save):
         )
 
 
-def test_mig_gpu_validation():
-    """Test MIG GPU validation."""
-    # Test single MIG instance (should pass)
-    validate_gpu_constraints("NVIDIA-A100-SXM4-40GB-MIG-3g.20gb", 1, "default")
-
-    # Test multiple MIG instances (should fail)
-    with pytest.raises(ValueError, match="Cannot request more than one MIG instance"):
-        validate_gpu_constraints("NVIDIA-A100-SXM4-40GB-MIG-3g.20gb", 2, "default")
-
-
 def test_h100_priority_validation():
     """Test H100 priority validation."""
     # Test H100 with default priority (should pass)
@@ -502,13 +491,6 @@ def test_h100_priority_validation():
     # Test H100 with short priority (should fail)
     with pytest.raises(ValueError, match="Cannot request H100 GPUs or multiple GPUs"):
         validate_gpu_constraints("NVIDIA-H100-80GB-HBM3", 1, "short")
-
-
-def test_is_mig_gpu():
-    """Test MIG GPU detection."""
-    assert is_mig_gpu("NVIDIA-A100-SXM4-40GB-MIG-3g.20gb") is True
-    assert is_mig_gpu("NVIDIA-A100-SXM4-40GB") is False
-    assert is_mig_gpu("NVIDIA-H100-80GB-HBM3") is False
 
 
 def test_read_startup_script(tmp_path):

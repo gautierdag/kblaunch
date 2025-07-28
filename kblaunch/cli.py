@@ -79,8 +79,6 @@ def get_user_queue(namespace: Optional[str] = None) -> Optional[str]:
 class GPU_PRODUCTS(str, Enum):
     a100_80gb = "NVIDIA-A100-SXM4-80GB"
     a100_40gb = "NVIDIA-A100-SXM4-40GB"
-    a100_40gb_mig_3g_20gb = "NVIDIA-A100-SXM4-40GB-MIG-3g.20gb"
-    a100_40gb_mig_1g_5gb = "NVIDIA-A100-SXM4-40GB-MIG-1g.5gb"
     h100_80gb_hbm3 = "NVIDIA-H100-80GB-HBM3"
     h200 = "NVIDIA-H200"
 
@@ -103,20 +101,11 @@ NFS_SERVER = os.getenv("INFK8S_NFS_SERVER_IP", None)
 app = typer.Typer()
 
 
-def is_mig_gpu(gpu_product: str) -> bool:
-    """Check if the GPU product is a MIG instance."""
-    return "MIG" in gpu_product
-
-
 def validate_gpu_constraints(gpu_product: str, gpu_limit: int, priority: str):
-    """Validate GPU constraints for MIG and H100 instances."""
+    """Validate GPU constraints for H100 instances."""
     # Skip validation for non-GPU jobs
     if gpu_limit == 0:
         return
-
-    # Check MIG constraint
-    if is_mig_gpu(gpu_product) and gpu_limit > 1:
-        raise ValueError("Cannot request more than one MIG instance in a single job")
 
     # Check H100 priority constraint
     if ("H100" in gpu_product or gpu_limit > 1) and priority == "short":
@@ -282,9 +271,9 @@ class KubernetesJob:
     ):
         # Validate gpu_limit first
         assert gpu_limit is not None, "gpu_limit must be specified"
-        assert 0 <= gpu_limit <= MAX_GPU, (
-            f"gpu_limit must be between 0 and {MAX_GPU}, got {gpu_limit}"
-        )
+        assert (
+            0 <= gpu_limit <= MAX_GPU
+        ), f"gpu_limit must be between 0 and {MAX_GPU}, got {gpu_limit}"
 
         self.name = name
         self.image = image
@@ -305,9 +294,9 @@ class KubernetesJob:
         # Validate RAM request
         validate_ram_request(self.ram_request)
 
-        assert int(self.cpu_request) <= MAX_CPU, (
-            f"cpu_request must be less than {MAX_CPU}"
-        )
+        assert (
+            int(self.cpu_request) <= MAX_CPU
+        ), f"cpu_request must be less than {MAX_CPU}"
 
         if gpu_limit > 0:
             ram_per_gpu = 80

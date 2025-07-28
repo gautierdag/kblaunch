@@ -46,7 +46,7 @@ This will go through the following steps:
 
 1. Set the user (optional): This is used to identify the user and required by the cluster. The default is set to $USER.
 2. Set the email (required): This is used to identify the user and required by the cluster.
-3. Set up Slack notifications (optional): This will send a test message to the webhook, and setup the webhook in the config. When your job starts you will receive a message at the webhook. Note a slack webhook is also required for automatic vscode tunnelling. 
+3. Set up Slack notifications (optional): This will send a test message to the webhook, and setup the webhook in the config. When your job starts you will receive a message at the webhook. Note a slack webhook is also required for automatic vscode tunnelling.
 4. Set up a PVC (optional): This will create a PVC for the user to use in their jobs.
 5. Set the default PVC to use (optional): Note only one pod can use the PVC at a time. The default pvc will be passed to the job. The pvc will always be mounted at `/pvc`.
 6. Set up git credentials (optional): If the user has set up a git/rsa key on the head node. We can export it as a secret for them and automatically load it and setup git credentials in their launched pods. This requires having setup git/rsa credentials before hand.
@@ -149,8 +149,6 @@ Launch command options:
   - Available options:
     - NVIDIA-A100-SXM4-80GB
     - NVIDIA-A100-SXM4-40GB
-    - NVIDIA-A100-SXM4-40GB-MIG-3g.20gb
-    - NVIDIA-A100-SXM4-40GB-MIG-1g.5gb
     - NVIDIA-H100-80GB-HBM3
 - `--secrets-env-vars`: List of secret environment variables (default: [])
 - `--local-env-vars`: List of local environment variables (default: [])

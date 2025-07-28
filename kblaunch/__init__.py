@@ -19,7 +19,6 @@
 ## Resource Types
 * A100 GPUs (40GB and 80GB variants)
 * H100 GPUs (80GB variant)
-* MIG GPU instances
 * CPU and RAM allocation
 * Persistent storage volumes
 
