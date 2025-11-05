@@ -26,6 +26,7 @@ from kblaunch.plots import (
     print_job_stats,
     print_queue_stats,
     print_user_stats,
+    print_pvc_stats,
 )
 
 MAX_CPU = 192
@@ -1353,6 +1354,7 @@ def monitor_gpus(
         ```
     """
     try:
+        config = load_config()
         namespace = namespace or get_current_namespace(config)
         print_gpu_total(namespace=namespace)
     except Exception as e:
@@ -1388,6 +1390,7 @@ def monitor_users(
         ```
     """
     try:
+        config = load_config()
         namespace = namespace or get_current_namespace(config)
         print_user_stats(namespace=namespace)
     except Exception as e:
@@ -1425,6 +1428,7 @@ def monitor_jobs(
         ```
     """
     try:
+        config = load_config()
         namespace = namespace or get_current_namespace(config)
         print_job_stats(namespace=namespace)
     except Exception as e:
@@ -1465,10 +1469,40 @@ def monitor_queue(
         ```
     """
     try:
+        config = load_config()
         namespace = namespace or get_current_namespace(config)
         print_queue_stats(namespace=namespace, reasons=reasons, include_cpu=include_cpu)
     except Exception as e:
         print(f"Error displaying queue stats: {e}")
+
+
+@monitor_app.command("pvcs")
+def monitor_pvcs(
+    namespace: str = typer.Option(
+        None, help="Kubernetes namespace (defaults to KUBE_NAMESPACE)"
+    ),
+):
+    """
+    `kblaunch monitor pvcs`
+    Display Persistent Volume Claim usage for the namespace.
+
+    Shows one row per PVC including the associated job, user, and requested size.
+
+    Args:
+    - namespace: Kubernetes namespace to monitor (default: KUBE_NAMESPACE)
+
+    Examples:
+        ```bash
+        kblaunch monitor pvcs
+        kblaunch monitor pvcs --namespace custom-namespace
+        ```
+    """
+    try:
+        config = load_config()
+        namespace = namespace or get_current_namespace(config)
+        print_pvc_stats(namespace=namespace)
+    except Exception as e:
+        print(f"Error displaying PVC stats: {e}")
 
 
 def version_callback(value: bool):

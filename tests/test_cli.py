@@ -964,4 +964,16 @@ def test_create_pvc_command(mock_k8s_client, mock_namespace):
         assert mock_save.call_args[0][0]["default_pvc"] == "test-pvc"
 
 
+def test_monitor_pvcs_command(mock_namespace):
+    """Test PVC monitor command."""
+    with (
+        patch("kblaunch.cli.load_config", return_value={}),
+        patch("kblaunch.cli.print_pvc_stats") as mock_print,
+    ):
+        result = runner.invoke(app, ["monitor", "pvcs"])
+
+    assert result.exit_code == 0
+    mock_print.assert_called_once_with(namespace="test-namespace")
+
+
 runner = CliRunner()
