@@ -14,6 +14,40 @@ import warnings
 from datetime import datetime, timezone
 
 
+def _quantity_to_gb(quantity: str) -> float:
+    """Convert Kubernetes storage quantity strings to gigabytes (Gi)."""
+    if not quantity:
+        return 0.0
+
+    quantity = quantity.strip()
+    if not quantity:
+        return 0.0
+
+    suffixes = {
+        "Ki": 1 / (1024 * 1024),
+        "Mi": 1 / 1024,
+        "Gi": 1,
+        "Ti": 1024,
+        "Pi": 1024 * 1024,
+        "Ei": 1024 * 1024 * 1024,
+    }
+
+    for suffix, multiplier in suffixes.items():
+        if quantity.endswith(suffix):
+            try:
+                value = float(quantity[: -len(suffix)])
+                return round(value * multiplier, 2)
+            except ValueError:
+                logger.debug(f"Unable to parse storage quantity '{quantity}'")
+                return 0.0
+
+    try:
+        return round(float(quantity), 2)
+    except ValueError:
+        logger.debug(f"Unable to parse storage quantity '{quantity}'")
+        return 0.0
+
+
 def get_default_metrics() -> dict:
     """Return default metrics when actual metrics cannot be obtained."""
     return {
@@ -519,6 +553,76 @@ def get_queue_data(namespace: str, include_cpu: bool = False) -> pd.DataFrame:
         return pd.DataFrame()
 
 
+def get_pvc_data(namespace: str) -> pd.DataFrame:
+    """Collect Persistent Volume Claim usage information."""
+    config.load_kube_config()
+    core_v1 = client.CoreV1Api()
+
+    pods = core_v1.list_namespaced_pod(namespace=namespace)
+    pvcs = core_v1.list_namespaced_persistent_volume_claim(namespace=namespace)
+
+    claim_usage: dict[str, dict[str, str]] = {}
+
+    for pod in pods.items:
+        volumes = getattr(pod.spec, "volumes", None)
+        if not volumes:
+            continue
+
+        labels = pod.metadata.labels or {}
+        job_name = labels.get("job-name")
+        if not job_name and pod.metadata.owner_references:
+            for ref in pod.metadata.owner_references:
+                if ref.kind == "Job":
+                    job_name = ref.name
+                    break
+        if not job_name:
+            job_name = pod.metadata.name
+
+        user_name = labels.get("eidf/user", "unknown")
+
+        for volume in volumes:
+            pvc_source = getattr(volume, "persistent_volume_claim", None)
+            if pvc_source and pvc_source.claim_name:
+                claim_usage.setdefault(
+                    pvc_source.claim_name,
+                    {
+                        "job_name": job_name,
+                        "user_name": user_name,
+                    },
+                )
+
+    records = []
+    for pvc in pvcs.items:
+        pvc_name = pvc.metadata.name
+        pvc_labels = pvc.metadata.labels or {}
+        storage_requests = getattr(pvc.spec, "resources", None)
+        storage_request = ""
+        if storage_requests and storage_requests.requests:
+            storage_request = storage_requests.requests.get("storage", "")
+
+        size_gb = _quantity_to_gb(storage_request)
+
+        job_info = claim_usage.get(pvc_name, {})
+        pvc_phase = getattr(pvc.status, "phase", "Unknown")
+        if job_info:
+            job_name = job_info["job_name"]
+            user_name = job_info["user_name"]
+        else:
+            job_name = "Unbound" if pvc_phase != "Bound" else "Not Mounted"
+            user_name = pvc_labels.get("eidf/user", "unknown")
+
+        records.append(
+            {
+                "pvc_name": pvc_name,
+                "job_name": job_name,
+                "user_name": user_name,
+                "size_gb": size_gb,
+            }
+        )
+
+    return pd.DataFrame(records)
+
+
 def print_gpu_total(namespace: str):
     latest = get_data(namespace=namespace, load_gpu_metrics=False, include_pending=True)
     console = Console()
@@ -780,3 +884,34 @@ def print_queue_stats(namespace: str, reasons=False, include_cpu=False):
         for idx, row in df.iterrows():
             reason_table.add_row(row["name"], row["message"])
         console.print(reason_table)
+
+
+def print_pvc_stats(namespace: str):
+    """Display PVC usage per namespace."""
+    df = get_pvc_data(namespace=namespace)
+    if df.empty:
+        logger.info("No PVCs found")
+        return
+
+    df = df.sort_values(["job_name", "pvc_name"]).reset_index(drop=True)
+    console = Console()
+
+    pvc_table = Table(title="PVC Usage", show_footer=True)
+    pvc_table.add_column("PVC Name", style="cyan")
+    pvc_table.add_column("Job Name", style="blue")
+    pvc_table.add_column("User", style="magenta")
+    pvc_table.add_column("Size (GB)", style="green", justify="right")
+
+    total_size = 0.0
+    for _, row in df.iterrows():
+        size_gb = float(row.get("size_gb", 0.0) or 0.0)
+        pvc_table.add_row(
+            row["pvc_name"],
+            row["job_name"],
+            row["user_name"],
+            f"{size_gb:.2f}",
+        )
+        total_size += size_gb
+
+    pvc_table.columns[3].footer = f"{total_size:.2f}"
+    console.print(pvc_table)

@@ -6,8 +6,10 @@ from kblaunch.plots import (
     get_data,
     get_default_metrics,
     get_gpu_metrics,
+    get_pvc_data,
     print_gpu_total,
     print_job_stats,
+    print_pvc_stats,
     print_user_stats,
     print_queue_stats,
 )
@@ -25,11 +27,12 @@ def mock_k8s_api():
         mock_pod.status.phase = "Running"
         mock_pod.metadata.name = "test-pod"
         mock_pod.metadata.namespace = "namespace"
-        mock_pod.metadata.labels = {"eidf/user": "test-user"}
+        mock_pod.metadata.labels = {"eidf/user": "test-user", "job-name": "test-job"}
         mock_pod.spec.node_name = "gpu-node-1"
         mock_pod.spec.node_selector = {
             "nvidia.com/gpu.product": "NVIDIA-A100-SXM4-40GB"
         }
+        mock_pod.metadata.owner_references = []
 
         # Mock container
         mock_container = MagicMock()
@@ -41,9 +44,24 @@ def mock_k8s_api():
         mock_container.command = ["python"]
         mock_container.args = ["train.py"]
         mock_pod.spec.containers = [mock_container]
+        pvc_source = MagicMock()
+        pvc_source.claim_name = "test-pvc"
+        mock_volume = MagicMock()
+        mock_volume.persistent_volume_claim = pvc_source
+        mock_pod.spec.volumes = [mock_volume]
 
         # Setup API response
         mock_api.return_value.list_namespaced_pod.return_value.items = [mock_pod]
+        mock_pvc = MagicMock()
+        mock_pvc.metadata.name = "test-pvc"
+        mock_pvc.metadata.labels = {"eidf/user": "test-user"}
+        mock_pvc.spec = MagicMock()
+        mock_pvc.spec.resources = MagicMock()
+        mock_pvc.spec.resources.requests = {"storage": "40Gi"}
+        mock_pvc.status.phase = "Bound"
+        mock_api.return_value.list_namespaced_persistent_volume_claim.return_value.items = [
+            mock_pvc
+        ]
         yield mock_api
 
 
@@ -216,3 +234,21 @@ def test_print_queue_stats(mock_get_queue_data, mock_console, mock_namespace):
 
     # Verify the console.print was called
     assert mock_console.print.call_count > 0
+
+
+def test_get_pvc_data(mock_k8s_api, mock_namespace):
+    """Test PVC data collection"""
+    df = get_pvc_data(namespace=mock_namespace)
+    assert not df.empty
+    row = df.iloc[0]
+    assert row["pvc_name"] == "test-pvc"
+    assert row["job_name"] == "test-job"
+    assert row["user_name"] == "test-user"
+    assert row["size_gb"] == pytest.approx(40.0)
+
+
+def test_print_pvc_stats(mock_k8s_api, mock_console, mock_namespace):
+    """Test PVC statistics display"""
+    initial_calls = mock_console.print.call_count
+    print_pvc_stats(namespace=mock_namespace)
+    assert mock_console.print.call_count > initial_calls
