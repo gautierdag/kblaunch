@@ -24,6 +24,7 @@ def _quantity_to_gb(quantity: str) -> float:
         return 0.0
 
     suffixes = {
+        "Ki": 1 / (1024 * 1024),
         "Mi": 1 / 1024,
         "Gi": 1,
         "Ti": 1024,

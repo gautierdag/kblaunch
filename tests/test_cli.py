@@ -21,6 +21,8 @@ from kblaunch.cli import (
     validate_gpu_constraints,
 )
 
+runner = CliRunner()
+
 
 @pytest.fixture
 def mock_k8s_client(monkeypatch):
@@ -974,6 +976,3 @@ def test_monitor_pvcs_command(mock_namespace):
 
     assert result.exit_code == 0
     mock_print.assert_called_once_with(namespace="test-namespace")
-
-
-runner = CliRunner()
