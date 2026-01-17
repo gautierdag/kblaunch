@@ -1,7 +1,7 @@
 # kblaunch
 
 [![Test](https://github.com/gautierdag/kblaunch/actions/workflows/test.yaml/badge.svg)](https://github.com/gautierdag/kblaunch/actions/workflows/test.yaml)
-![Python Version](https://img.shields.io/badge/python-3.9+-blue)
+![Python Version](https://img.shields.io/badge/python-3.10+-blue)
 ![Ruff](https://img.shields.io/badge/linter-ruff-blue)
 [![PyPI Version](https://img.shields.io/pypi/v/kblaunch)](https://pypi.org/project/kblaunch/)
 [![Documentation](https://img.shields.io/badge/docs-pdoc-blue)](https://gautierdag.github.io/kblaunch/)
