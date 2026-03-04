@@ -484,12 +484,8 @@ def get_queue_data(namespace: str, include_cpu: bool = False) -> pd.DataFrame:
                 user = wl["spec"]["podSets"][0]["template"]["metadata"]["labels"].get(
                     "eidf/user", "unknown"
                 )
-                queue = wl["spec"]["podSets"][0]["template"]["metadata"]["labels"].get(
-                    "kueue.x-k8s.io/queue-name", "unknown"
-                )
-                priority = wl["spec"]["podSets"][0]["template"]["metadata"][
-                    "labels"
-                ].get("kueue.x-k8s.io/priority-class", "default-workload-priority")
+                queue = wl["spec"].get("queueName", "unknown") # this should actually trigger an error - UG
+                priority = wl["spec"].get("priorityClassName", "unknown") #  this too
             except KeyError:
                 user = "labels-missing"
                 queue = "labels-missing"
