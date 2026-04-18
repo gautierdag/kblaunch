@@ -10,6 +10,7 @@ from typing import List, Optional
 import requests
 import typer
 import yaml
+import urllib3
 from kubernetes import client, config
 from kubernetes.client.rest import ApiException
 from loguru import logger
@@ -60,8 +61,8 @@ def get_current_namespace(config: Optional[dict] = None) -> Optional[str]:
     """Get the current namespace from environment variable only, no subprocess."""
     if config is None:
         config = load_config()
-        if "namespace" in config:
-            return config["namespace"]
+    if "namespace" in config:
+        return config["namespace"]
     return os.getenv("KUBE_NAMESPACE")
 
 
@@ -100,6 +101,15 @@ PRIORITY_MAPPING = {
 NFS_SERVER = os.getenv("INFK8S_NFS_SERVER_IP", None)
 
 app = typer.Typer()
+
+
+def load_kube_config():
+    """Load kube config and disable SSL verification for clusters with self-signed certs."""
+    config.load_kube_config()
+    cfg = client.Configuration.get_default_copy()
+    cfg.verify_ssl = False
+    client.Configuration.set_default(cfg)
+    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 
 def validate_gpu_constraints(gpu_product: str, gpu_limit: int, priority: str):
@@ -211,7 +221,7 @@ def create_git_secret(
             private_key = f.read()
 
         # Load the kube config
-        config.load_kube_config()
+        load_kube_config()
         api = client.CoreV1Api()
 
         # Create the secret
@@ -324,10 +334,15 @@ class KubernetesJob:
                 )
 
         self.volume_mounts = [
-            {"name": "workspace", "mountPath": "/workspace", "readOnly": True},
-            {"name": "publicdata", "mountPath": "/public", "readOnly": True},
             {"name": "dshm", "mountPath": "/dev/shm"},
         ]
+        if nfs_server is not None:
+            self.volume_mounts.insert(
+                0, {"name": "publicdata", "mountPath": "/public", "readOnly": True}
+            )
+            self.volume_mounts.insert(
+                0, {"name": "workspace", "mountPath": "/workspace", "readOnly": True}
+            )
 
         # Handle the legacy single PVC parameter
         if pvc_name is not None:
@@ -450,14 +465,21 @@ class KubernetesJob:
 
         # pass kubernetes secrets as environment variables
         if self.secret_env_vars:
-            for key, secret_name in self.secret_env_vars.items():
+            for env_name, secret_ref in self.secret_env_vars.items():
+                # secret_ref is either a string (secret_name, key=env_name)
+                # or a tuple (secret_name, secret_key)
+                if isinstance(secret_ref, tuple):
+                    secret_name, secret_key = secret_ref
+                else:
+                    secret_name = secret_ref
+                    secret_key = env_name
                 container["env"].append(
                     {
-                        "name": key,
+                        "name": env_name,
                         "valueFrom": {
                             "secretKeyRef": {
                                 "name": secret_name,
-                                "key": key,
+                                "key": secret_key,
                             }
                         },
                     }
@@ -549,7 +571,7 @@ class KubernetesJob:
 
     def run(self):
         """Create or update the job using the Kubernetes API."""
-        config.load_kube_config()
+        load_kube_config()
         api = client.BatchV1Api()
 
         # Convert YAML to dict
@@ -579,7 +601,7 @@ class KubernetesJob:
 
 def check_if_completed(job_name: str, namespace: str) -> bool:
     # Load the kube config
-    config.load_kube_config()
+    load_kube_config()
 
     # Create an instance of the API class
     api = client.BatchV1Api()
@@ -638,9 +660,17 @@ def get_env_vars(
 def get_secret_env_vars(
     secrets_names: list[str],
     namespace: str,
-) -> dict[str, str]:
+    secret_env_mappings: Optional[list[str]] = None,
+) -> dict[str, str | tuple[str, str]]:
     """
-    Get secret environment variables from Kubernetes secrets
+    Get secret environment variables from Kubernetes secrets.
+
+    Returns a dict mapping env var name to either:
+      - secret_name (str): when the env var name matches the secret key
+      - (secret_name, secret_key) tuple: when they differ
+
+    secret_env_mappings accepts entries like "ENV_NAME=secret-name:secret-key"
+    to map a secret key to a different env var name.
     """
     secrets_env_vars = {}
     for secret_name in secrets_names:
@@ -653,6 +683,26 @@ def get_secret_env_vars(
                 secrets_env_vars[key] = secret_name
         except Exception as e:
             raise typer.BadParameter(f"Error reading secret {secret_name}: {e}")
+
+    # Apply explicit mappings: ENV_NAME=secret-name:secret-key
+    if secret_env_mappings:
+        for mapping in secret_env_mappings:
+            if "=" not in mapping:
+                raise typer.BadParameter(
+                    f"Invalid --secret-env-mapping format: '{mapping}'. "
+                    "Expected ENV_NAME=secret-name:secret-key"
+                )
+            env_name, secret_ref = mapping.split("=", 1)
+            if ":" not in secret_ref:
+                raise typer.BadParameter(
+                    f"Invalid --secret-env-mapping format: '{mapping}'. "
+                    "Expected ENV_NAME=secret-name:secret-key"
+                )
+            secret_name, secret_key = secret_ref.split(":", 1)
+            # Remove the raw key entry if it was auto-discovered
+            secrets_env_vars.pop(secret_key, None)
+            secrets_env_vars[env_name] = (secret_name, secret_key)
+
     return secrets_env_vars
 
 
@@ -661,7 +711,7 @@ def check_if_pvc_exists(pvc_name: str, namespace: str) -> bool:
     Check if a Persistent Volume Claim (PVC) exists in the specified namespace.
     """
     # Load the kube config
-    config.load_kube_config()
+    load_kube_config()
     # Create an instance of the API class
     api = client.CoreV1Api()
     pvc_exists = False
@@ -730,7 +780,7 @@ def create_pvc(
     validate_storage(storage)
 
     # Load the kube config
-    config.load_kube_config()
+    load_kube_config()
 
     # Create an instance of the API class
     api = client.CoreV1Api()
@@ -945,6 +995,10 @@ def launch(
         [],  # Use empty list as default instead of None
         help="List of local environment variables to export to the container",
     ),
+    secret_env_mapping: list[str] = typer.Option(
+        [],
+        help="Map secret keys to env var names: ENV_NAME=secret-name:secret-key (repeatable)",
+    ),
     load_dotenv: bool = typer.Option(
         True, help="Load environment variables from .env file"
     ),
@@ -1033,8 +1087,7 @@ def launch(
         namespace = get_current_namespace(config)
         if namespace is None:
             raise typer.BadParameter(
-                "Namespace not provided.",
-                "Please provide --namespace or run 'kblaunch setup' to configure.",
+                "Namespace not provided. Please provide --namespace or run 'kblaunch setup' to configure.",
             )
 
     # Determine queue name if not provided
@@ -1042,8 +1095,7 @@ def launch(
         queue_name = get_user_queue(namespace)
         if queue_name is None:
             raise typer.BadParameter(
-                "Queue name not provided.",
-                "Please provide --queue-name or run 'kblaunch setup' to configure.",
+                "Queue name not provided. Please provide --queue-name or run 'kblaunch setup' to configure.",
             )
 
     # Use email from config if not provided
@@ -1058,11 +1110,6 @@ def launch(
     # Determine which NFS server to use (priority: command-line > config > env var > default)
     if nfs_server is None:
         nfs_server = config.get("nfs_server", NFS_SERVER)
-        if nfs_server is None:
-            # warn if NFS server is not set
-            logger.warning(
-                "NFS server not set/found. Please provide --nfs-server or run 'kblaunch setup' mount the NFS partition."
-            )
 
     # Add SLACK_WEBHOOK to local_env_vars if configured
     if "slack_webhook" in config:
@@ -1150,6 +1197,7 @@ def launch(
     secrets_env_vars_dict = get_secret_env_vars(
         secrets_names=secrets_env_vars,
         namespace=namespace,
+        secret_env_mappings=secret_env_mapping if secret_env_mapping else None,
     )
 
     # Check for overlapping keys in local and secret environment variables
